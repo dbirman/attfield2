@@ -1,0 +1,5 @@
+.DS_store
+**/*.txt
+**/__pycache__
+code/scripts/proc/
+code/tests/proc/

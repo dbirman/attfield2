@@ -30,7 +30,7 @@ class SequentialMulti(nn.Sequential):
         for layer in self:
             layer_out = layer(curr)
             curr = layer_out
-            outputs.append((layer, layer_out))
+            outputs.append(layer_out)
         return outputs[-1]
 
 

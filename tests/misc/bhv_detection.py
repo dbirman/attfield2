@@ -1,3 +1,9 @@
+import importlib.util
+spec = importlib.util.spec_from_file_location("link_libs",
+    "/Users/kaifox/projects/art_physio/code/script/link_libs_kfmbp.py")
+link_libs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(link_libs)
+
 from proc import voxel_selection as vx
 from proc import network_manager as nm
 from proc import backprop_fields
@@ -47,7 +53,8 @@ if __name__ == '__main__':
     pprint(scores_nn)
 
 
-    task_4 = det.FourWayObjectDetectionTask('data/imagenet/index.csv',
+    task_4 = det.FourWayObjectDetectionTask(
+        Paths.data.join('imagenet/index.csv'),
         whitelist = ['n02808440', 'n07718747'], image_size = 112)
     imgs_4, ys_4, _ = task_4.val_set(None, SIZE)
     encodings_4 = det.model_encodings(model, [(0, 4, 2)], imgs_4)
@@ -75,6 +82,8 @@ if __name__ == '__main__':
               det.by_cat(all_ys, lambda c: ys_4[c]),
               det.by_cat(all_ys, lambda c: ys_4t[c])]
     plot_bhv.task_performance(
-        'plots/test/decision_fn_{}.pdf'.format(SIZE),
+        Paths.plots.join('test/decision_fn_{}.pdf'.format(SIZE)),
         full_dec, full_y,
         ["Train", "Validation", "FourWayX", "FourWay"])
+
+

@@ -10,10 +10,6 @@ import torch
 import cv2
 import os
 
-import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set_style("white")
-
 
 normalize = transforms.Normalize(
     mean=[0.485, 0.456, 0.406],
@@ -289,9 +285,6 @@ if __name__ == '__main__':
     # video = sliding_bar_sequence(100, 7, 23*8)
     
     # checker = checker_diamonond(246, 20)
-    # plt.imshow(checker)
-    # plt.colorbar()
-    # plt.show()
     # exit()
 
     #video = mcgill_images(64, 5)

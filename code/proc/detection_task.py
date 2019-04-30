@@ -30,7 +30,6 @@ class ClassifierMod(nm.LayerMod):
         self.b = b
     
     def post_layer(self, outputs, cache):
-        print("unsure about this part...")
         return self.decision_function(outputs)
 
     def predict(self, encodings):
@@ -40,17 +39,44 @@ class ClassifierMod(nm.LayerMod):
         if isinstance(encodings, np.ndarray):
             return np.dot(encodings, self.w.T[:, 0]) + self.b
         else:
-            return torch.dot(encodings, self.w) + self.b
+            w = torch.tensor(self.w.T).float()
+            b = torch.tensor(self.b).float()
+            return torch.mm(encodings, w) + b
 
-    @staticmethod
-    def from_file():
-        ''''''
-        pass
+    def predict_on_fn(self, decision_fn):
+        return decision_fn > 0
+
+
+def load_logregs(filename):
+    archive = np.load(filename)
+    if archive['type'] == 'mod':
+        return {
+            c: ClassifierMod(archive[c+'_w'], archive[c+'_b'])
+            for c in archive['categories']
+        }
+    else:
+        regs = {c: LogisticRegression()
+                for c in archive['categories']}
+        for c in regs:
+            regs[c].coef_ = archive[c+'_c']
+            regs[c].intercept_ = archive[c+'_i']
+
 
 
 def save_logregs(filename, logregs):
-    if type(logregs) is ClassifierMod:
-        np.savez(filename)
+    logreg_type = type(logregs[next(iter(logregs.keys()))])
+    if logreg_type is ClassifierMod:
+        np.savez(filename,
+            categories = list(logregs.keys()),
+            **{c+"_w": logregs[c].w for c in logregs},
+            **{c+"_b": logregs[c].b for c in logregs},
+            type = 'mod')
+    else:
+        np.savez(filename,
+            categories = list(logregs.keys()),
+            **{c+"_c": logregs[c].coef_ for c in logregs},
+            **{c+"_i": logregs[c].intercept_ for c in logregs},
+            type = 'sk')
 
 
 def multi_decision(regs, encodings):
@@ -105,8 +131,16 @@ class IsolatedObjectDetectionTask():
             contains an object of the category
         '''
         if cat is None:
-            return {c: self._load_set(c, n, 'n', **kwargs)
-                    for c in self.cats}
+            # Run _load_set for each category and arrange the
+            # returned values into dictionaries
+            rets = None
+            for c in self.cats:
+                curr_ret = self._load_set(c, n, 'n', **kwargs)
+                if rets is None:
+                    rets = tuple({} for i in range(len(curr_ret)))
+                for i in range(len(curr_ret)):
+                    rets[i][c] = curr_ret[i]
+            return rets
         else:
             return self._load_set(cat, n, 'n', **kwargs)
 
@@ -142,7 +176,8 @@ class IsolatedObjectDetectionTask():
             for pth in paths])
 
 
-    def _load_set(self, cat, n, ncol, cache = 'data/.imagenet_cache'):
+    def _load_set(self, cat, n, ncol, cache = 'data/.imagenet_cache',
+                  shuffle = False):
         '''
         Pull positive and negative examples of a given category
         These will be the first `n` images of the category, as ordered
@@ -163,8 +198,10 @@ class IsolatedObjectDetectionTask():
             contains an object of the category
         '''
 
-        cachefile = os.path.join(cache, cat + str(n) + ncol + 
-                                 str(self.image_size) + ".npz")
+        if cache is not None:
+            cachefile = os.path.join(cache, cat + str(n) + ncol + 
+                                     str(self.image_size) + ".npz")
+
         if cache is not None and os.path.exists(cachefile):
             archive = np.load(cachefile)
             imgs = archive['imgs']
@@ -192,9 +229,10 @@ class IsolatedObjectDetectionTask():
                 np.savez(cachefile, imgs = imgs, ys = ys)
 
         # Shuffle
-        shuf = np.random.permutation(2*n)
-        ys = ys[shuf]
-        imgs = imgs[shuf]
+        if shuffle:
+            shuf = np.random.permutation(2*n)
+            ys = ys[shuf]
+            imgs = imgs[shuf]
 
         # Normalize how CORNet expects, and shift channel
         # dimension to torch format
@@ -263,8 +301,10 @@ class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
             contains an object of the category
         '''
 
-        cachefile = os.path.join(cache, "4W" + str(loc) + cat + str(n) +  
-                                 ncol + str(self.image_size) + ".npz")
+        if cache is not None:
+            cachefile = os.path.join(cache, "4W" + str(loc) + cat +  
+                     str(n) + ncol + str(self.image_size) + ".npz")
+
         if cache is not None and os.path.exists(cachefile):
             archive = np.load(cachefile)
             imgs = archive['imgs']
@@ -435,7 +475,8 @@ def model_encodings(model, decoders, imgs, mods = {}):
 
 
 
-def fit_logregs(model, decoders, task, mods = {}, train_size = 30):
+def fit_logregs(model, decoders, task, mods = {},
+                train_size = 30, shuffle = False):
     '''
     Fit linear decoders to a model and a task.
     ### Arguments
@@ -456,13 +497,15 @@ def fit_logregs(model, decoders, task, mods = {}, train_size = 30):
     # Compute how the network embeds the images in feature space
     encodings = {}
     all_ys = {}
+    all_imgs = {}
     skregs = {}
     regmods = {}
 
     for c in task.cats:
         print("Training class:", c)
-        imgs, ys = task.train_set(c, train_size)[:2]
+        imgs, ys = task.train_set(c, train_size, shuffle=shuffle)[:2]
         all_ys[c] = ys
+        all_imgs[c] = imgs
         encodings[c] = model_encodings(
             model, decoders, imgs, mods = mods)
 
@@ -471,7 +514,7 @@ def fit_logregs(model, decoders, task, mods = {}, train_size = 30):
             skregs[c].coef_,
             skregs[c].intercept_)
 
-    return encodings, skregs, regmods, all_ys
+    return encodings, skregs, regmods, all_imgs, all_ys
 
 
 

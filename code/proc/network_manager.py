@@ -66,17 +66,16 @@ class NetworkManager(object):
         # local potition within our neighbor nodes
         self.curr_idx = self.saved_curr_idx.pop(-1) + 1
         
+        # Apply any mods to the layer outputs
+        for mod in self.mods_to_apply(self.full_idx):
+            outputs = mod.post_layer(outputs, cache)
+
         # Log results of copmutation done as this step
         self.computed[self.full_idx] = outputs
         self.modules[self.full_idx] = module
         
-        # Apply any mods to the layer outputs
-        for mod in self.mods_to_apply(self.full_idx):
-            outputs = mod.post_layer(outputs, cache)
-        
         # Denote the fact that we are exiting this branch
         self.full_idx = self.full_idx[:-1]
-        
         
         return outputs
     

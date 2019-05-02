@@ -1,9 +1,7 @@
 from proc import attention_models as att
-from proc import network_manager as nm
 from proc import voxel_selection as vx
 from proc import possible_fields
 from proc import backprop_fields
-from proc import lsq_fields
 from proc import video_gen
 from proc import cornet
 import plot.rfs
@@ -57,8 +55,8 @@ def linear_shift(theta, original, rf_params):
     ret = {}
     for layer, params in rf_params.items():
         # RF Shift vectors
-        dx  = np.array(original[layer]).T[0]-np.array(params).T[0]
-        dy  = np.array(original[layer]).T[1]-np.array(params).T[1]
+        dx = np.array(original[layer]).T[0]-np.array(params).T[0]
+        dy = np.array(original[layer]).T[1]-np.array(params).T[1]
         # Project shift vectors onto theta direction
         proj = np.cos(theta)*dx + np.sin(theta)*dx
         ret[layer] = proj

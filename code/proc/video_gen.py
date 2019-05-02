@@ -281,6 +281,38 @@ def mcgill_groups(n, classes = MCGILL_CLASSES):
     return np.repeat(groups, n)
 
 
+
+def to_numpy(video, normalizer = normalize):
+    '''Utility function for turning a torch-converted video
+    back into numpy format with channels dimension last and
+    normalized (approximately) to [0,255] (via an inverse 
+    of the given normalization transform)'''
+    ret = []
+    for frame in video:
+        # See https://bit.ly/2XYcx9o for original source
+        chnl_iter = zip(frame, normalizer.mean, normalizer.std)
+        # The normalize code is t.sub_(m).div_(s)
+        new_frame = [np.array((t * s) + m) for t, m, s in chnl_iter]
+        ret.append(np.stack(new_frame))
+    return np.moveaxis(np.stack(ret), 1, -1)
+
+
+def to_numpy_force(video):
+    '''Utility function for turning a torch-converted video
+    back into numpy format with channels dimension last and
+    normalized to [0,255]. The `to_numpy` function is
+    preferable since it simply undoes a normalization, but
+    when ranges may have been altered (i.e. by attention)
+    this provides an alternative.'''
+    ret = []
+    for frame in video:
+        # The normalize code is t.sub_(m).div_(s)
+        new_frame = [(255*t-t.min())/((t.max()-t.min())) for t in frame]
+        ret.append(np.stack(new_frame))
+    return np.moveaxis(np.stack(ret), 1, -1)
+
+
+
 if __name__ == '__main__':
     # video = sliding_bar_sequence(100, 7, 23*8)
     

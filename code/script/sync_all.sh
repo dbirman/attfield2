@@ -5,7 +5,7 @@ GITHUB=/Users/kaifox/projects/dan_attfield_git/attfield2
 DRIVE=/Users/kaifox/GoogleDrive/attfield
 
 # Copy from local to google drive
-cp -r $ROOT/code $DRIVE/code
+cp -r $ROOT/code $DRIVE
 
 # Sync required folders to github
 cp -R -P -p $ROOT/code $GITHUB

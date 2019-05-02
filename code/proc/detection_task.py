@@ -2,8 +2,8 @@ from proc import network_manager as nm
 from proc import video_gen
 
 from sklearn.linear_model import LogisticRegression
+from skimage.transform import downscale_local_mean
 import scipy.ndimage.interpolation as scimg
-from skimage.transform import rescale
 import sklearn.metrics as sk_metric
 from torch import nn
 import pandas as pd
@@ -11,8 +11,59 @@ import numpy as np
 import skvideo.io
 import operator
 import torch
+import h5py
 import tqdm
 import os
+
+
+import line_profiler
+_profile = LineProfiler()
+
+
+RAND_LOC = -1
+class QuadAttention(nm.LayerMod):
+
+    def __init__(self, beta, locs):
+        '''
+        ### Arguments
+        - `task` --- A FourWayObjectDetectionTask object
+        - `locs` --- List of integers with length of expected
+            batch size, or (RAW PYTHON) integer (non-numpy).
+        '''
+        self.locs = locs
+        self.beta = beta
+
+    def pre_layer(self, inp, *args, **kwargs):
+        """
+        ### Arguments
+        - `inp` --- Main layer input, of shape (batch, channel, row, col)
+        """
+        scaled = inp * self.scale_array(inp.size())
+        return (scaled,) + args, kwargs, None
+
+    def scale_array(self, shape):
+        if shape[-2] % 2 != 0 or shape[-1] % 2 != 0:
+            raise ValueError("QuadAttention only valid " + 
+                             "for even-sized images") 
+        if isinstance(self.locs, int):
+            locs = [self.locs] * shape[0]
+        else:
+            if len(self.locs) != shape[0]:
+                raise ValueError("Input to QuadAttention " + 
+                             "has {} frames ".format(shape[0]) + 
+                             "when given `locs` only has " + 
+                             "{} values.".format(len(self.locs))) 
+            locs = self.locs
+        row_n = shape[-2]//2
+        col_n = shape[-1]//2
+        imgs = np.concatenate(
+            [np.ones((1, row_n, col_n)) * self.beta, 
+             np.ones((3, row_n, col_n))])
+        gain = [FourWayObjectDetectionTask._arrange_grid(imgs, locs[i])[0]
+                for i in range(shape[0])]
+        gain = np.array(gain)
+        return torch.tensor(gain[:, np.newaxis, ...]).float()
+            
 
 
 
@@ -63,6 +114,7 @@ def load_logregs(filename):
 
 
 
+
 def save_logregs(filename, logregs):
     logreg_type = type(logregs[next(iter(logregs.keys()))])
     if logreg_type is ClassifierMod:
@@ -94,21 +146,23 @@ def by_cat(guide_dict, func):
 
 
 class IsolatedObjectDetectionTask():
-    def __init__(self, index, image_size = 224,
-        whitelist = None):
+    def __init__(self, h5file, image_size = 224,
+        whitelist = None, _seed = 1):
         '''
         ### Arguments
         - `index` --- Path to an index.csv file
         '''
-        self.base_dir = os.path.dirname(index)
-        self.index = pd.read_csv(index)
+        self.h5 = h5py.File(h5file, 'r')
+        self.seed = _seed
 
         if whitelist is not None:
-            row_whitelist = np.isin(self.index['wnid'], whitelist)
-            self.index = self.index.loc[row_whitelist]
+            self.cats = [c for c in self.h5.keys() if c in whitelist]
+        else:
+            self.cats = list(self.h5.keys())
 
-        self.cats = self.index['category'].unique()
-        self.image_size = 224
+        h5_dim = self.h5[self.cats[0]].shape[1]
+        self.image_scale = h5_dim//image_size
+        self.image_size = h5_dim//self.image_scale
 
 
     def train_set(self, cat, n, **kwargs):
@@ -135,48 +189,68 @@ class IsolatedObjectDetectionTask():
             # returned values into dictionaries
             rets = None
             for c in self.cats:
-                curr_ret = self._load_set(c, n, 'n', **kwargs)
+                curr_ret = self._load_set(c, n, 1, **kwargs)
                 if rets is None:
                     rets = tuple({} for i in range(len(curr_ret)))
                 for i in range(len(curr_ret)):
                     rets[i][c] = curr_ret[i]
             return rets
         else:
-            return self._load_set(cat, n, 'n', **kwargs)
+            return self._load_set(cat, n, 1, **kwargs)
 
 
-    def _crop(self, img):
-        '''Zoom and center crop to self.image_size'''
-        factor = self.image_size/min(img.shape[1], img.shape[2])
-        img = scimg.zoom(img, [1, factor, factor, 1], order = 1)
-        #rescale(img[0], factor, factor, anti_aliasing = True)
+    def _load_images(self, cat, which, read_order):
+        # Tuple indexing does weird things
+        if isinstance(which, tuple): which = list(which)
 
-        # Center crop
-        # See https://stackoverflow.com/a/50322574/1888160
-        bounding = (1, self.image_size, self.image_size, 3)
-        start = tuple(map(lambda a, da: a//2-da//2, img.shape,
-                          bounding))
-        end = tuple(map(operator.add, start, bounding))
-        slices = tuple(map(slice, start, end))
-        return img[slices]
+        if hasattr(which, '__iter__'):
+            if len(which) == 0:
+                h5_dim = self.h5[self.cats[0]].shape[1]
+                ret_shp = [0, h5_dim//self.image_scale,
+                           h5_dim//self.image_scale, 3]
+                return np.empty(ret_shp)
 
+            # Reading from h5 is only supported in blocks
+            pull_limit = max(which)
+            if read_order == -1:
+                imgs = self.h5[cat][-pull_limit-1:][::-1]
+            else:
+                imgs = self.h5[cat][:pull_limit+1]
+            # Now do the full indexing
+            imgs = imgs[which]
+        else:
+            ord_offset = -1 if read_order is -1 else 0
+            imgs = self.h5[cat][which + ord_offset][np.newaxis, ...]
 
-    def _load_images(self, idxs):
-        '''Convert row indexes in self.index to zoommed and cropped
-        images as numpy arrays.
-        ### Arguments
-        - `idxs` --- List of integers indexing rows of self.index
-        ### Returns
-        - `imgs` --- Numpy array containing images ordered as `idxs`.
-            Will be of shape:
-            (len(idxs), self.image_size, self.image_size, 3)'''
-        paths = self.index['path'].iloc[idxs]
-        return np.concatenate([
-            self._crop(skvideo.io.vread(os.path.join(self.base_dir, pth)))
-            for pth in paths])
+        # Scale appropriately
+        factors = (1, self.image_scale, self.image_scale, 1)
+        return downscale_local_mean(imgs, factors)
 
 
-    def _load_set(self, cat, n, ncol, cache = 'data/.imagenet_cache',
+    
+    def _negative_imgs(self, cat, n, read_order):
+
+        # Calculate the number of images required from each category
+        cat_n = n // (len(self.cats)-1)
+        n_extra = n % (len(self.cats)-1)
+        neg_cats = [c for c in self.cats if c != cat]
+
+        # Pull the images from the HDF5 archive
+        imgs = np.concatenate(
+            [self._load_images(c, range(cat_n), read_order)
+             for c in neg_cats] + 
+            [self._load_images(c, cat_n, read_order)
+             for c in neg_cats[:n_extra]]
+            )
+
+        # (Deterministically) shuffle the images
+        rng = np.random.RandomState(self.seed)
+        imgs = imgs[rng.permutation(len(imgs))]
+
+        return imgs
+
+
+    def _load_set(self, cat, n, read_order, cache = None,
                   shuffle = False):
         '''
         Pull positive and negative examples of a given category
@@ -185,8 +259,8 @@ class IsolatedObjectDetectionTask():
         ### Arguments
         - `cat` --- A category identifier from the self.cats
         - `n` --- Number of positive images to include
-        - `ncol` --- The column from which to pull an ordering over
-            the images
+        - `read_order` --- 1 to read from the front of the archive
+            or -1 to read from the back of the archive.
         ### Returns
         - `imgs` --- A collection of images for a binary
             classification. Will be of size (2*n, 3, 224, 224).
@@ -209,18 +283,8 @@ class IsolatedObjectDetectionTask():
 
         else:
 
-            # Identify the first `n` images in this category
-            cat_images = self.index['category'] == cat
-            first_n = self.index[ncol] < n
-            true_idxs = np.where(cat_images & first_n)[0]
-            true_images = self._load_images(true_idxs)
-
-            # Get the first images spread across false categories
-            false_idxs = np.where(~cat_images & first_n)[0]
-            n_sort = np.argsort(self.index[ncol].iloc[false_idxs])
-            false_idxs = false_idxs[n_sort[:n]]
-            false_images = self._load_images(false_idxs)
-
+            true_images = self._load_images(cat, range(n), read_order)
+            false_images = self._negative_imgs(cat, n, read_order)
             imgs = np.concatenate([true_images, false_images])
             ys = np.concatenate([np.ones(n, dtype = bool),
                                  np.zeros(n, dtype = bool)])
@@ -242,10 +306,7 @@ class IsolatedObjectDetectionTask():
 
 
     def val_size(self, train_size):
-        max_ns = [
-            max(self.index.where(self.index['category'] == c)['n'])
-            for c in self.cats]
-        return min(max_ns) - train_size
+        return len(self.h5[self.cats[0]]) - train_size
 
 
     def val_set(self, cat, n, **kwargs):
@@ -255,20 +316,26 @@ class IsolatedObjectDetectionTask():
             # returned values into dictionaries
             rets = None
             for c in self.cats:
-                curr_ret = self._load_set(c, n, 'neg_n', **kwargs)
+                curr_ret = self._load_set(c, n, -1, **kwargs)
                 if rets is None:
                     rets = tuple({} for i in range(len(curr_ret)))
                 for i in range(len(curr_ret)):
                     rets[i][c] = curr_ret[i]
             return rets
         else:
-            return self._load_set(cat, n, 'neg_n', **kwargs)
+            return self._load_set(cat, n, -1, **kwargs)
 
 
 
 class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
 
-    def _load_set(self, cat, n, ncol, cache = 'data/.imagenet_cache',
+    def __init__(self, *args, **kw):
+        '''Same signature as IsolatedObjectDetectionTask.__init__'''
+        super(FourWayObjectDetectionTask, self).__init__(*args, **kw)
+        # Images returned are twice the 'requested' size
+        self.image_size *= 2
+
+    def _load_set(self, cat, n, read_order, cache = None,
         loc = -1, shuffle = False):
         '''
         Pull positive and negative examples of a given category
@@ -277,8 +344,8 @@ class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
         ### Arguments
         - `cat` --- A category identifier from the self.cats
         - `n` --- Number of positive images to include
-        - `ncol` --- The column from which to pull an ordering over
-            the images
+        - `read_order` --- 1 to read from the front of the archive
+            or -1 to read from the back of the archive.
         - `loc` --- Position where the first image from `imgs` should
             go in the grid. The mapping is
             - 0: Top Left
@@ -300,7 +367,6 @@ class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
             1 or 0 to indicate whether each image in `imgs`
             contains an object of the category
         '''
-
         if cache is not None:
             cachefile = os.path.join(cache, "4W" + str(loc) + cat +  
                      str(n) + ncol + str(self.image_size) + ".npz")
@@ -313,23 +379,14 @@ class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
 
         else:
             # Identify the first `n` images in this category
-            cat_images = self.index['category'] == cat
-            first_n = self.index[ncol] < n
-            true_idxs = np.where(cat_images & first_n)[0]
-            true_images = self._load_images(true_idxs)
+            true_images = self._load_images(cat, range(n), read_order)
+            false_images = self._negative_imgs(cat, 7*n, read_order)
 
-            # Get the first images spread across false categories
-            # We need 7 times as many images for false as true so
-            # we can both generate the negative examples and fill
-            # in the three other spaces in positive examples
-            first_false_n = self.index[ncol] < 7*n/(len(self.cats)-1)
-            false_idxs = np.where(~cat_images & first_false_n)[0]
-            n_sort = np.argsort(self.index[ncol].iloc[false_idxs])
-            false_idxs_posarr = false_idxs[n_sort[:3*n]]
-            false_images_posarr = self._load_images(false_idxs_posarr)
-            
-            false_idxs = false_idxs[n_sort[3*n:7*n]]
-            false_images = self._load_images(false_idxs)
+            # Split up the false images into those that will be in
+            # grids with a true image and those that will be in
+            # negative grids
+            false_images_posarr = false_images[:3*n]
+            false_images = false_images[3*n:]
 
             pos_imgs = []
             neg_imgs = []
@@ -370,7 +427,8 @@ class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
         return imgs, ys, locs
 
 
-    def _arrange_grid(self, imgs, loc = -1):
+    @staticmethod
+    def _arrange_grid(imgs, loc = -1):
         '''
         Arrange four images into 2x2 grid, with the first image at a
         specified location and others distributed randomly.
@@ -391,7 +449,7 @@ class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
         '''
         # Rearrange `imgs` to put the first image in the right spot
         # and to randomize position of the other images
-        
+
         if loc == -1:
             loc = np.random.randint(4)
 
@@ -411,6 +469,22 @@ class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
             axis = 0), loc
 
 
+    def val_size(self, train_size):
+        if len(self.cats)-1 > 7:
+            # Negative image arrays will be distributed around
+            # different categories enough that the number of
+            # positive images necessary will dominate
+            return len(self.h5[self.cats[0]]) - train_size
+        else:
+            # Not enough categories to spread negative examples
+            # across, the need for 7 times as many negative
+            # images dominates
+            remaining = len(self.h5[self.cats[0]]) - 7*train_size
+            return remaining // 7
+
+
+
+
 def score_logregs(logregs, encodings, ys):
 
     per_cat = {}
@@ -418,7 +492,7 @@ def score_logregs(logregs, encodings, ys):
     decision = {}
     for c in encodings:
 
-        # Get predictions and decision function values
+        # Get predictions and decision function valueås
         preds[c] = logregs[c].predict(encodings[c])
         decision[c] = logregs[c].decision_function(encodings[c])
 
@@ -518,7 +592,49 @@ def fit_logregs(model, decoders, task, mods = {},
 
 
 
-    
+
+def generate_dataset(imagenet_index, output, image_size = 224):
+    '''Process ImageNet data down to an archived dataset
+    that is quickly readable for training.
+    ### Arguments
+    - `output` --- HDF5 filename to output to. This will contain
+        one table for each image category.
+    '''
+
+    base_dir = os.path.dirname(imagenet_index)
+    index = pd.read_csv(imagenet_index)
+    cats = index['category'].unique()
+
+    max_ns = [max(index.iloc[np.where(index['category'] == c)]['n'])
+              for c in cats]
+    limit_n = min(max_ns)
+
+    with h5py.File(output, "w") as f:
+        for cat in tqdm.tqdm(cats, desc = "Category"):
+            dset = f.create_dataset(cat,
+                (limit_n, image_size, image_size, 3),
+                dtype = 'i')
+
+            cat_images = index['category'] == cat
+            first_n = index['n'] < limit_n
+            idxs = np.where(cat_images & first_n)[0]
+            paths = index['path'].iloc[idxs]
+
+            for i, pth in enumerate(tqdm.tqdm(paths, desc = "   Image")):
+                img = skvideo.io.vread(os.path.join(base_dir, pth))
+                img = img[0]
+                factor = image_size/min(img.shape[0], img.shape[1])
+                img = scimg.zoom(img, [factor, factor, 1], order = 1)
+
+                # Center crop
+                # See https://stackoverflow.com/a/50322574/1888160
+                bounding = (image_size, image_size, 3)
+                start = tuple(map(lambda a, da: a//2-da//2, img.shape,
+                                  bounding))
+                end = tuple(map(operator.add, start, bounding))
+                slices = tuple(map(slice, start, end))
+                dset[i, ...] = img[slices]
+
 
 
 

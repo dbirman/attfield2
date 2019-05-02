@@ -8,10 +8,12 @@ import unittest
 
 from proc import detection_task as det
 import proc.network_manager as nm
+from proc import video_gen
 from proc import cornet
 
 from pprint import pprint
 import numpy as np
+import skvideo.io
 
 
 class TestSuite(unittest.TestCase):
@@ -19,20 +21,18 @@ class TestSuite(unittest.TestCase):
     def setUp(self):
         self.model, ckpt = cornet.load_cornet("Z")
         self.task = det.IsolatedObjectDetectionTask(
-            Paths.data('imagenet/index.csv'),
-            whitelist = ['n02808440', 'n07718747'])
-        self.SIZE = 2
+            Paths.data('imagenet.h5'),
+            whitelist = ['bathtub', 'artichoke'])
+        self.SIZE = 20
 
     def test_loadfuncs(self):
         iso = det.IsolatedObjectDetectionTask(
-            Paths.data('imagenet/index.csv'))
+            Paths.data('imagenet.h5'))
         imgs, all_ys = self.task.val_set(None, self.SIZE, cache = None)
         imgs, ys = self.task.train_set(None, self.SIZE, shuffle = True)
 
         four = det.FourWayObjectDetectionTask(
-            Paths.data('imagenet/index.csv'))
-        four = det.FourWayObjectDetectionTask(
-            Paths.data('imagenet/index.csv'))
+            Paths.data('imagenet.h5'))
         c = self.task.cats[0]
         imgs, ys, locs = four.val_set(c, self.SIZE, cache = None, loc = -1)
         imgs, ys, locs = four.train_set(c, self.SIZE, loc = 2, shuffle = True)
@@ -79,8 +79,31 @@ class TestSuite(unittest.TestCase):
             np.allclose(decision1[c], decision2[c])
             for c in regmods))
 
+    def test_quad_att(self):
+        four = det.FourWayObjectDetectionTask(
+            Paths.data('imagenet.h5'))
+        c = four.cats[0]
+        imgs, ys, locs = four.train_set(c, self.SIZE, shuffle = False)
+
+        rand_att = det.QuadAttention(2., det.RAND_LOC)
+        static_att = det.QuadAttention(2., 0)
+        (imgs_rand_att,), _, _ = rand_att.pre_layer(imgs)
+        (imgs_static_att,), _, _ = static_att.pre_layer(imgs)
+        skvideo.io.vwrite(
+            Paths.data('unittest/rand_att_{}.mp4'.format(c)),
+            np.repeat(video_gen.to_numpy_force(imgs_rand_att), 20, axis = 0))
+        skvideo.io.vwrite(
+            Paths.data('unittest/static_att_{}.mp4'.format(c)),
+            np.repeat(video_gen.to_numpy_force(imgs_static_att), 20, axis = 0))
+        
+        placed_att = det.QuadAttention(2., locs)
+        (imgs_placed_att,), _, _ = placed_att.pre_layer(imgs)
+        skvideo.io.vwrite(
+            Paths.data('unittest/placed_att_{}.mp4'.format(c)),
+            np.repeat(video_gen.to_numpy_force(imgs_placed_att), 20, axis = 0))
+
 
 if __name__ == '__main__':
-    # Reached 98% coverage, with only a few cache operations missed
-    # (29 May 2019)
+    # Reached 99% coverage, with only a few cache operations missed
+    # (30 May 2019)
     unittest.main()

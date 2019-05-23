@@ -75,8 +75,8 @@ class QuadAttention(nm.LayerMod):
         elif self.profile == 'gauss':
             gauss = lsq_fields.gauss_with_params_torch(
                 col_n, row_n, [col_n/2], [row_n/2],
-                [750*(row_n/112)**2], [1])
-            return (self.beta-1) * gauss / gauss.mean()
+                [750*(row_n/112)**2], [self.beta-1])
+            return gauss
 
 
 class QuadAttentionFullShuf(QuadAttention):
@@ -691,7 +691,7 @@ def voxel_decision_grads(voxels, model, decoders, imgs, ys, regs,
         mgr.computed[(0,)].backward(back_mask)
 
         # Make space for the results of this run
-        for res_dict in (grad, acts):
+        for res_dict in (grads, acts):
             res_dict[c] = {}
 
         # Pull gradients from the model and score its performance

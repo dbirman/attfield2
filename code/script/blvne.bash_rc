@@ -1,0 +1,11 @@
+function subl {
+        touch "$@"
+        open -a "Sublime Text" "$@"
+}
+export -f subl
+
+py3=/Users/gru/proj/attfield/venv/bin/python3
+alias py3=$py3
+
+export PS1="\[\e[m\]\[\e[37m\][\[\e[m\]\[\e[31m\]\u\[\e[m\] \[\e[36m\]\W\[\e[m\]] "
+export CLI_COLOR=1

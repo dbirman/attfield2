@@ -25,7 +25,7 @@ class TestSuite(unittest.TestCase):
             whitelist = ['bathtub', 'artichoke'])
         self.SIZE = 20
 
-    def test_loadfuncs(self):
+    '''def test_loadfuncs(self):
         iso = det.IsolatedObjectDetectionTask(
             Paths.data('imagenet.h5'))
         imgs, all_ys = self.task.val_set(None, self.SIZE, cache = None)
@@ -77,13 +77,14 @@ class TestSuite(unittest.TestCase):
             lambda c: regmods[c].decision_function(encodings[c]))
         self.assertTrue(all(
             np.allclose(decision1[c], decision2[c])
-            for c in regmods))
+            for c in regmods))'''
 
     def test_quad_att(self):
         four = det.FourWayObjectDetectionTask(
             Paths.data('imagenet.h5'))
         c = four.cats[0]
-        imgs, ys, locs = four.train_set(c, self.SIZE, shuffle = False)
+        imgs, ys, locs = four.train_set(
+            c, self.SIZE, shuffle = False)
 
         rand_att = det.QuadAttention(2., det.RAND_LOC)
         static_att = det.QuadAttention(2., 0)
@@ -96,7 +97,7 @@ class TestSuite(unittest.TestCase):
             Paths.data('unittest/static_att_{}.mp4'.format(c)),
             np.repeat(video_gen.to_numpy_force(imgs_static_att), 20, axis = 0))
         
-        placed_att = det.QuadAttention(2., locs)
+        placed_att = det.QuadAttention(2., locs, profile = 'gauss')
         (imgs_placed_att,), _, _ = placed_att.pre_layer(imgs)
         skvideo.io.vwrite(
             Paths.data('unittest/placed_att_{}.mp4'.format(c)),

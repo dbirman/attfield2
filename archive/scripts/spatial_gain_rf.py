@@ -1,3 +1,9 @@
+import importlib.util
+spec = importlib.util.spec_from_file_location("link_libs",
+    "/Users/kaifox/projects/art_physio/code/script/link_libs_kfmbp.py")
+link_libs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(link_libs)
+
 from proc import attention_models as att
 from proc import voxel_selection as vx
 from proc import possible_fields
@@ -24,9 +30,6 @@ def get_rfs(inputs, voxels, mods, approx_n = 30):
     return manager, grads, params
 
 
-
-
-
 def gaussian_shift(pos, original, rf_params):
     '''
     Amount that rf_params is linearly shifted from original 
@@ -45,7 +48,6 @@ def gaussian_shift(pos, original, rf_params):
         # Return difference in distances
         ret[layer] = dist_post - dist_pre
     return ret
-
 
 def linear_shift(theta, original, rf_params):
     '''
@@ -185,6 +187,12 @@ if __name__ == '__main__':
             'plots/detail/sgatt_{}_{}_{}_{}_grads.pdf'.format(
                 *pos, sigma, beta),
             layers, voxels, mod_results[(pos, sigma, beta)][0])
+
+        plot.rfs.grad_heatmap(
+            'plots/detail/sgatt_{}_{}_{}_{}_grads.pdf'.format(
+                *pos, sigma, beta),
+            layers, voxels, mod_results[(pos, sigma, beta)][0])
+
 
     plot.rfs.shift_by_amp(
         'plots/sgatt_linear_amps.pdf',

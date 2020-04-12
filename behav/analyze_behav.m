@@ -89,9 +89,26 @@ for si = 1:length(adatas)
                 
                 if ~isempty(fdata)
                     % compute d' 
-                    hits = sum(fdata(:,6)==1 .* fdata(:,7)==1)/size(fdata,1);
-                    fa = sum(fdata(:,6)==0 .* fdata(:,7)==1)/size(fdata,1);
-                    dp(ui,fd+1) = norminv(hits)-norminv(fa);
+                    hitsfunc = @(x) sum(x(:,6)==1 .* x(:,7)==1)/size(x,1);
+                    fafunc = @(x) sum(x(:,6)==0 .* x(:,7)==1)/size(x,1); 
+                    dpfunc = @(x) norminv(hitsfunc(x)) - norminv(fafunc(x));
+                    
+                    dp(ui,fd+1) = dpfunc(fdata);
+                    % bootstrap error bars
+                    % for some reason the bootci function isn't working
+                    % here (returns NaN, or just returns the identical
+                    % values without any replacement?)
+%                     reps = 1000;
+%                     for ri = 1:reps
+%                         % get a random sample of fdata
+%                         sampled = randsample(1:size(fdata,1),size(fdata,1),true);
+%                         dp_boot(ri) = dpfunc(fdata(sampled,:));
+%                     end
+%                     % remove inf values
+%                     dp_boot(isinf(dp_boot)) = nan;
+%                     % quantile
+% %                     dp_ci(ui,fd+1,:) = quantile(dp_boot,[0.025 0.0975]);
+                    
                     c(ui,fd+1) = 0.5*(norminv(hits)+norminv(fa));
 %                     if size(fdata,1)>1
 %                         ci = bootci(100,@nanmean,fdata(:,9));
@@ -111,15 +128,18 @@ for si = 1:length(adatas)
     p(1) = plot(msdur,dp(:,1),'o','MarkerFaceColor','k','MarkerEdgeColor','w','MarkerSize',5);
 %     fit = fitSatExponential(msdur,dp(:,1));
 %     plot(fit.x,fit.y,'--k');
-    fit = fitLog(msdur,dp(:,1));
-    plot(fit.x,fit.y,'-k');
+    fitfocal = fitLog(msdur,dp(:,1));
+    plot(fitfocal.x,fitfocal.y,'-k');
+    disp(sprintf('Focal d''(x) = %1.3f * log(%1.3f * x + 1)',fitfocal.params(1),fitfocal.params(2)));
     % focal
 %     errbar(msdur,dp(:,2),ecorr(:,2)-dp(:,2),'-b');
     p(2) = plot(msdur,dp(:,2),'o','MarkerFaceColor','b','MarkerEdgeColor','w','MarkerSize',5);
 %     fit = fitSatExponential(msdur,dp(:,2));
 %     plot(fit.x,fit.y,'--b');
-    fit = fitLog(msdur,dp(:,2));
-    plot(fit.x,fit.y,'-b');
+    fitdist = fitLog(msdur,dp(:,2));
+    plot(fitdist.x,fitdist.y,'-b');
+    disp(sprintf('Distributed d''(x) = %1.3f * log(%1.3f * x + 1)',fitdist.params(1),fitdist.params(2)));
+
     
     xlabel('Duration (s)');
     ylabel('Sensitivity (d'')');

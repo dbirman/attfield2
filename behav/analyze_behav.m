@@ -57,6 +57,21 @@ for si = 1:length(SIDs)
     adatas{si} = adata;
 end
 
+%% Make a new dataset to save to a CSV
+% Header:
+%    1      2     3      4         5               6    7    8
+% trial #  cat  focal   present  responsePresent  dur   tp   fa 
+
+header = {'trial','category','focal','targetPresent','responsePresent','duration','tp','fa'};
+
+tp = (adata(:,6)==1) .* (adata(:,7)==1); 
+fa = (adata(:,6)==0) .* (adata(:,7)==1);
+outdata = [(1:size(adata,1))' adata(:,2) adata(:,4) adata(:,6) adata(:,7) adata(:,8) tp fa];
+
+outdata = outdata(~isnan(adata(:,7)),:);
+
+csvwriteh(fullfile('~/proj/attfield2/behav/out.csv'),outdata,header);
+
 %% Make a plot
 h = figure;
 
@@ -109,7 +124,9 @@ for si = 1:length(adatas)
 %                     % quantile
 % %                     dp_ci(ui,fd+1,:) = quantile(dp_boot,[0.025 0.0975]);
                     
-                    c(ui,fd+1) = 0.5*(norminv(hits)+norminv(fa));
+                    cfunc = @(x) 0.5*(norminv(hitsfunc(x)) + norminv(fafunc(x)));
+
+                    c(ui,fd+1) = cfunc(fdata);
 %                     if size(fdata,1)>1
 %                         ci = bootci(100,@nanmean,fdata(:,9));
 %                         ecorr(ui,fd+1) = ci(2);

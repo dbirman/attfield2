@@ -211,13 +211,16 @@ def voxel_activity(voxels, manager, inputs, params):
 def save_activity_csv(filename, voxels, true_acts, pred_acts):
     # true_acts.shape, pred_acts.shape: (batch, n_vox)
     dfs = []
-    voxel_strs = vx.VoxelIndex.serialize(layer_vox)
+    voxel_strs = vx.VoxelIndex.serialize(voxels)
     for layer, layer_vox in voxels.items():
 
         nframe = len(true_acts[layer])
-        voxel_strs_layer = np.tile(voxel_strs[layer][np.nax, :], [nframe, 1])
-        frame_idxs = np.tile(np.arange(nframe)[:, np.nax],
-                             [1, layer_vox.nvox()])
+        voxel_strs_layer = np.tile(
+            np.array(voxel_strs[layer])[np.nax, :],
+            [nframe, 1])
+        frame_idxs = np.tile(
+            np.arange(nframe)[:, np.nax],
+            [1, layer_vox.nvox()])
 
         dfs.append(pd.DataFrame({
             'unit': voxel_strs_layer.ravel(),
@@ -278,13 +281,10 @@ def load_rf_csv(filename):
     return voxels, params
 
 
-if __name__ == "__main__":
+def load_units_from_csv(filename, col = 'unit'):
+    df = pd.read_csv(filename)
+    return vx.VoxelIndex.from_serial(df[col])
 
-    model, ckpt = cornet.load_cornet("Z")
-    layers = [(0, 3, 3)]
-    lsq_rfs(model, layers, verbose = 1,
-        bar_speed = 4., percent = 30,
-        grad_n = 20, grad_mode = 'check')
 
 
 

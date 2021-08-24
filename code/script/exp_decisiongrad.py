@@ -8,6 +8,7 @@ spec.loader.exec_module(link_libs)
 import proc.detection_task as det
 import proc.network_manager as nm
 import proc.attention_models as att
+import proc.experiment_tools as exp
 from proc import voxel_selection as vx
 from proc.possible_fields import estimates_to_params
 from proc import backprop_fields
@@ -35,79 +36,33 @@ import gc
 # Experiment Parameters
 UNIT_LAYERS = [(0,0,0), (0,2,0)]
 ATT_LAYERS = [(0, 0)]
-BETAS = [1.1, 2.0, 11.0]
+BETAS = [11.0]#[1.1, 2.0, 4.0, 11.0]
 ATT_MODES = {#'qg': det.QuadAttention,
              'fs': det.QuadAttentionFullShuf}
 DECODERS = [(0, 4, 2)]
 
 # Speed/Quality Parameters
-N_UNIT = 1000
+N_UNIT = 500
 TRAIN_N = 30
 TEST_N = 100
-GRAD_APPROX_N = 50
-CHECK_SPEED = 2
+GRAD_APPROX_N = None
+ROTATION_FRAMES = 32
+CAT_WHITELIST = None #['padlock', 'banana', 'stone wall', 'mortar']
+GRAD_HEATMAPS = False
 
 # Path parameters
 DATA_OUT = Paths.data("exp/effect_shift_rel")
 PLOT_OUT = Paths.plots("exp/effect_shift_rel")
 ISO_PATH = Paths.data("imagenet/imagenet_iso224.h5")
 FOUR_PATH = Paths.data('imagenet_four224l0.h5')
-CAT_WHITELIST = ['padlock', 'banana', 'stone wall', 'mortar']
 
 
 model, ckpt = cornet.load_cornet("Z")
-
-'''
-units = vx.random_voxels_for_model(
-    model, UNIT_LAYERS, N_UNIT, 3, 224, 224)
-'''
+'''units = vx.random_voxels_for_model(
+    model, UNIT_LAYERS, N_UNIT, 3, 224, 224)'''
 rf_fname = os.path.join(DATA_OUT, "rfs_noatt.csv")
 units, _ = lsq_fields.load_rf_csv(rf_fname)
 
-
-
-
-
-# lsq_fields.save_rf_csv does our job for us here
-
-def save_bhv_grads(filename, units, grads):
-    cats = list(grads.keys())
-    layers = list(grads[cats[0]].keys())
-    n_img = len(grads[cats[0]][layers[0]])
-
-    # Arrange other column data into a flattened version of `grads`
-    unit = vx.VoxelIndex.serialize(units)
-    unit_values = np.concatenate([
-        np.tile(np.array(unit[l])[np.newaxis, :], [n_img, 1]).ravel()
-        for l in layers for c in cats
-    ])
-    img_values = np.concatenate([
-        np.tile(np.arange(n_img)[:, np.newaxis], [1, len(unit[l])]).ravel()
-        for l in layers for c in cats
-    ])
-    cat_values = np.concatenate([
-        np.full([n_img, len(unit[l])], c).ravel()
-        for l in layers for c in cats
-    ])
-    grad_values = np.concatenate([
-        grads[c][l].ravel()
-        for l in layers for c in cats
-    ])
-    
-    df = pd.DataFrame(dict(
-            unit = unit_values, img = img_values,
-            cat = cat_values, value = grad_values
-    ))
-    df.to_csv(filename, index = False)
-
-
-def get_rfs(inputs, voxels, mods, approx_n = GRAD_APPROX_N):
-    manager, grads = backprop_fields.gradients_raw_fullbatch(
-        model, inputs, voxels, mods = mods,
-        approx_n = approx_n)
-    estimated = backprop_fields.parameter_estimates_grads(grads, voxels)
-    params = estimates_to_params(estimated)
-    return manager, grads, params
 
 
 
@@ -120,46 +75,34 @@ def get_rfs(inputs, voxels, mods, approx_n = GRAD_APPROX_N):
 # ================================================= #
 
 
-rf_imgs = video_gen.rf_slider_check(224,
+'''rf_imgs = video_gen.rf_slider_check(224,
     check_widths = [5, 10],
-    speed = CHECK_SPEED)
+    speed = CHECK_SPEED)'''
+rf_imgs = video_gen.sine_rotation(224, ROTATION_FRAMES,
+    freqs = [5, 20], phase_rand = True)
 
 
 
-
-'''
 # Unattended ('normal' or 'train-mode') receptive fields
 print("RFs without attention")
-_, raw_grads, raw_rfs = get_rfs(rf_imgs, units, {})
+_, raw_grads, raw_rfs = exp.get_rfs(rf_imgs, model, units, {},
+    approx_n = GRAD_APPROX_N)
 
 # Forget units with no gradient found
-# (speeds up later operations dramatically for higher layers)
-new_units = {}
-for layer, layer_vox in units.items():
-    nans = np.array(raw_rfs[layer]).T[3]
-    new_units[layer] = vx.VoxelIndex(layer,
-        [idxs[~np.isnan(nans)] for idxs in layer_vox._idx])
-    raw_grads[layer] = raw_grads[layer][~np.isnan(nans)]
-    raw_rfs[layer] = np.array(raw_rfs[layer])[~np.isnan(nans)]
-    
-# Reset the units object since it couldn't change during iteration
-units = new_units
-if len(units) == 0:
-    print("No units with receptive fields found")
-    exit()
+# (speeds up later 'null' operations dramatically for higher layers)
+units = exp.discard_nan_rfs(units, raw_grads, raw_rfs)
 
 
 # Output data & diagnostics
 lsq_fields.save_rf_csv(os.path.join(DATA_OUT, "rfs_noatt.csv"),
         units, raw_rfs)
-plot.rfs.grad_heatmap(
-    os.path.join(PLOT_OUT, 'rfs_noatt.pdf'),
-    list(units.keys()), units, raw_grads)
+if GRAD_HEATMAP:
+    plot.rfs.grad_heatmap(
+        os.path.join(PLOT_OUT, 'rfs_noatt.pdf'),
+        list(units.keys()), units, raw_grads)
 
 # Clean up
-del raw_grads, raw_rfs, _, nans; gc.collect()
-'''
-
+del raw_grads, raw_rfs, _; gc.collect()
 
 
 
@@ -167,21 +110,22 @@ for (att_name, AttClass), att_l, att_b in (
     iit.product(ATT_MODES.items(), ATT_LAYERS, BETAS)):
 
     print(f"RFs with attention: [ {att_name} - {att_b} x {att_l} ]")
-    _, att_grads, att_rfs = get_rfs(rf_imgs, units, {
-        att_l: AttClass(att_b, 0, profile = 'gauss')})
+    _, att_grads, att_rfs = exp.get_rfs(rf_imgs, model, units, {
+        att_l: AttClass(att_b, 0, profile = 'gauss')},
+        approx_n = GRAD_APPROX_N)
 
     # Output data & diagnostics
-    lstr = '-'.join(str(i) for i in l)
+    lstr = '-'.join(str(i) for i in att_l)
     fname = f"rfs_a{att_name}_b{att_b}_l{lstr}."
     lsq_fields.save_rf_csv(os.path.join(DATA_OUT, fname + "csv"),
             units, att_rfs)
-    plot.rfs.grad_heatmap(
-        os.path.join(PLOT_OUT, fname + 'pdf'),
-        list(units.keys()), units, att_grads)
+    if GRAD_HEATMAP:
+        plot.rfs.grad_heatmap(
+            os.path.join(PLOT_OUT, fname + 'pdf'),
+            list(units.keys()), units, att_grads)
 
 # Clean up
 del att_grads, att_rfs, _; gc.collect()
-
 
 
 
@@ -197,7 +141,7 @@ del att_grads, att_rfs, _; gc.collect()
 #   Unit Activations & Decision Gradients           #
 # ================================================= #
 
-'''
+
 rf_fname = os.path.join(DATA_OUT, "rfs_noatt.csv")
 units, _ = lsq_fields.load_rf_csv(rf_fname)
 
@@ -214,16 +158,15 @@ print("Unit effects without attention")
 four_task = det.DistilledDetectionTask(
     FOUR_PATH, whitelist = CAT_WHITELIST)
 val_imgs, val_ys, _ = four_task.val_set(None, TEST_N)
-ugrads, uacts = det.voxel_decision_grads(
-    units, model, DECODERS, val_imgs, regs)
+noatt_results = det.voxel_decision_grads(
+    units, model, DECODERS, val_imgs, val_ys, regs)
 
-# Output data
-fname = os.path.join(DATA_OUT, '{}_noatt.csv')
-save_bhv_grads(fname.format('ugrads'), units, ugrads)
-save_bhv_grads(fname.format('uacts'), units, ugrads)
+# Generate a table of results for later calls to add to
+df = exp.csv_template(units, four_task.cats, UNIT_LAYERS, TEST_N)
+exp.append_results(noatt_results, df, "noatt")
 
 # Clean up
-del ugrads, _; gc.collect()
+del noatt_results, _; gc.collect()
 
 
 
@@ -233,23 +176,22 @@ for (att_name, AttClass), att_l, att_b in (
 
     print(f"Unit effects with attention: [ {att_name} - {att_b} x {att_l} ]")
     
-    ugrads, uacts = det.voxel_decision_grads(
-        units, model, DECODERS, val_imgs, regs, mods = {
+    att_results = det.voxel_decision_grads(
+        units, model, DECODERS, val_imgs, val_ys, regs, mods = {
         att_l: AttClass(att_b, 0, profile = 'gauss')})
 
-    # Output data
+    # Merge data with other conditions
     lstr = '-'.join(str(i) for i in att_l)
-    fname = f"_a{att_name}_b{att_b}_l{lstr}.csv"
-    save_bhv_grads(
-        os.path.join(DATA_OUT, 'ugrads' + fname),
-        units, ugrads)
-    save_bhv_grads(
-        os.path.join(DATA_OUT, 'uacts' + fname),
-        units, uacts)
+    condition = f"a{att_name}_b{att_b}_l{lstr}"
+    exp.append_results(att_results, df, condition)
+
+
+    # Output data
+    df.to_csv(os.path.join(DATA_OUT, 'att_bhv_fx_fs11.csv'), index = False, float_format = '%g')
 
 # Clean up
-del ugrads, uacts, regs; gc.collect()
-'''
+del att_results, regs; gc.collect()
+
 
 
 

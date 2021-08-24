@@ -278,7 +278,7 @@ def grad_diff_heatmaps(filename, mod_results, raw_grads,
 
 
 def shift_by_amp(filename, amps, shifts, var = None, mask = None,
-                 pal = None, violincut = 2):
+                 pal = None, violincut = 2, **kwargs):
     '''
     ### Arguments
     - `amps` --- A dictionary mapping layers to  arrays of attentional
@@ -308,6 +308,8 @@ def shift_by_amp(filename, amps, shifts, var = None, mask = None,
                 palette = pal,
                 linewidth = 1,
                 cut = violincut,
+                scale = 'width',
+                **kwargs
                 )
             if var is None:
                 ax = sns.violinplot(x = amps_, y = shifts_, **style_kws)

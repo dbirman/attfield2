@@ -5,9 +5,19 @@ link_libs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(link_libs)
 
 from proc import detection_task as det
+import sys
+
+imagenet_h5 = sys.argv[1]
+meta_csv = sys.argv[2]
+output_h5 = sys.argv[3]
+blacklist = sys.argv[4:]
 
 
 if __name__ == '__main__':
     det.cache_iso_task(
-        Paths.data('imagenet.h5'),
-        Paths.data('imagenet_iso224.h5'))
+        imagenet_h5,
+        output_h5,
+        blacklist = blacklist,
+        metadata_csv = meta_csv,
+        image_size = 112
+        )

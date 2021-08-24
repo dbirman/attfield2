@@ -9,12 +9,15 @@ import sklearn.metrics as sk_metric
 from torch import nn
 import pandas as pd
 import numpy as np
+import collections
 import skvideo.io
 import operator
 import torch
 import h5py
 import tqdm
+import sys
 import os
+import gc
 
 
 RAND_LOC = -1
@@ -30,6 +33,7 @@ class QuadAttention(nm.LayerMod):
             in the selected quad, or `'gauss'` to apply gaussian
             gain centered at that quad and clipped at its edges.
         '''
+        super(nm.LayerMod, self).__init__()
         self.locs = locs
         self.beta = beta
         self.profile = profile
@@ -47,9 +51,14 @@ class QuadAttention(nm.LayerMod):
         return (scaled,) + args, kwargs, None
 
     def scale_array(self, shape):
-        if shape[-2] % 2 != 0 or shape[-1] % 2 != 0:
-            raise ValueError("QuadAttention only valid " + 
-                             "for even-sized images") 
+        '''
+        ### Arguments
+        - 'shape' --- Shape of the tensor that the scaling array will
+            be applied to, of form (batch, channel, row, col)
+        ### Returns
+        - 'arr' --- The scale array, a torch tensor of compatible to
+            multiply with a tenor of the shape specified.
+        '''
         if isinstance(self.locs, int):
             locs = [self.locs] * shape[0]
         else:
@@ -61,9 +70,16 @@ class QuadAttention(nm.LayerMod):
             locs = self.locs
         row_n = shape[-2]//2
         col_n = shape[-1]//2
-        imgs = np.concatenate(
-            [self.gain_profile(row_n, col_n) + 1, 
-             np.ones((3, row_n, col_n))])
+        row_odd_fix = shape[-2] % 2
+        col_odd_fix = shape[-1] % 2
+        imgs = [
+            self.gain_profile(
+                row_n + row_odd_fix,
+                col_n + col_odd_fix
+                )[0, ...] + 1,
+            np.ones((row_n + row_odd_fix, col_n)),
+            np.ones((row_n, col_n + col_odd_fix)),
+            np.ones((row_n, col_n))]
         gain = [FourWayObjectDetectionTask._arrange_grid(imgs, locs[i])[0]
                 for i in range(shape[0])]
         gain = np.array(gain)
@@ -75,8 +91,8 @@ class QuadAttention(nm.LayerMod):
         elif self.profile == 'gauss':
             gauss = lsq_fields.gauss_with_params_torch(
                 col_n, row_n, [col_n/2], [row_n/2],
-                [750*(row_n/112)**2], [self.beta-1])
-            return gauss
+                [750*(row_n/112)**2], [1])
+            return (self.beta-1) * gauss
 
 
 class QuadAttentionFullShuf(QuadAttention):
@@ -108,8 +124,11 @@ class LayerBypass(nm.LayerMod):
 
 class ClassifierMod(nm.LayerMod):
     def __init__(self, w, b):
-        self.w = w
-        self.b = b
+        super(nm.LayerMod, self).__init__()
+        self.w = nn.Parameter(torch.tensor(w).float())
+        self.register_parameter("w", self.w)
+        self.b = nn.Parameter(torch.tensor(b).float())
+        self.register_parameter("b", self.b)
     
     def post_layer(self, outputs, cache):
         return self.decision_function(outputs)
@@ -119,21 +138,29 @@ class ClassifierMod(nm.LayerMod):
 
     def decision_function(self, encodings):
         if isinstance(encodings, np.ndarray):
-            return np.dot(encodings, self.w.T[:, 0]) + self.b
+            w = self.w.data.detach().cpu().numpy().T[:, 0]
+            b = self.b.data.detach().cpu().numpy()
+            return (encodings * w[None, :]).sum(axis = -1) + b
+            return np.dot(encodings, w) + b
         else:
-            w = torch.tensor(self.w.T).float()
-            b = torch.tensor(self.b).float()
+            w = torch.t(self.w.data)
+            b = self.b.data
             return torch.mm(encodings, w) + b
 
     def predict_on_fn(self, decision_fn):
         return decision_fn > 0
 
+def stddiff(a, b):
+    mean = (a.mean() + b.mean()) / 2
+    std = (a.std() + b.std()) / 2
+    return abs(a/std - b/std).mean()
 
-def load_logregs(filename):
+def load_logregs(filename, bias = True):
     archive = np.load(filename)
+    bias = float(bias)
     if archive['type'] == 'mod':
         return {
-            c: ClassifierMod(archive[c+'_w'], archive[c+'_b'])
+            c: ClassifierMod(archive[c+'_w'], bias * archive[c+'_b'])
             for c in archive['categories']
         }
     else:
@@ -141,7 +168,8 @@ def load_logregs(filename):
                 for c in archive['categories']}
         for c in regs:
             regs[c].coef_ = archive[c+'_c']
-            regs[c].intercept_ = archive[c+'_i']
+            regs[c].intercept_ = bias * archive[c+'_i']
+        return regs
 
 
 
@@ -151,8 +179,8 @@ def save_logregs(filename, logregs):
     if logreg_type is ClassifierMod:
         np.savez(filename,
             categories = list(logregs.keys()),
-            **{c+"_w": logregs[c].w for c in logregs},
-            **{c+"_b": logregs[c].b for c in logregs},
+            **{c+"_w": logregs[c].w.detach().numpy() for c in logregs},
+            **{c+"_b": logregs[c].b.detach().numpy() for c in logregs},
             type = 'mod')
     else:
         np.savez(filename,
@@ -370,6 +398,7 @@ class IsolatedObjectDetectionTask():
             rets = None
             for c in self.cats:
                 curr_ret = self._load_set(c, n, -1, **kwargs)
+                # loaded_imgs = self.h5[]
                 if rets is None:
                     rets = tuple({} for i in range(len(curr_ret)))
                 for i in range(len(curr_ret)):
@@ -406,6 +435,9 @@ class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
             - 2: Bottom Left
             - 3: Bottom Right
             - -1: Random
+            Alternatively a list/tuple/array containing `n` integers can be
+            provided corresponding to the target locations for each
+            of the `n` returned positive images.
         - `shuffle` --- If true, `imgs` will have all the positive 
             examples grouped together in the beginning of the first
             dimension. If false then `imgs` will be shuffled along 
@@ -423,6 +455,12 @@ class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
         if cache is not None:
             cachefile = os.path.join(cache, "4W" + str(loc) + cat +  
                      str(n) + ncol + str(self.image_size) + ".npz")
+
+        if hasattr(loc, '__iter__'):
+            loc_iter = True
+            loc_tupl = tuple(loc)
+        else:
+            loc_iter = False
 
         if cache is not None and os.path.exists(cachefile):
             archive = np.load(cachefile)
@@ -449,10 +487,10 @@ class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
                 array_posimg = false_images_posarr[3*i:3*(i+1)]
                 pos_img, pos_loc = self._arrange_grid(
                     np.concatenate([[true_images[i]], array_posimg]),
-                    loc = loc)
+                    loc = loc if not loc_iter else loc_tupl[i])
                 neg_img, neg_loc = self._arrange_grid(
                     false_images[4*i:4*(i+1)],
-                    loc = loc)
+                    loc = loc if not loc_iter else loc_tupl[i])
                 pos_imgs.append(pos_img)
                 neg_imgs.append(neg_img)
                 pos_locs.append(pos_loc)
@@ -484,16 +522,17 @@ class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
     def _arrange_grid(imgs, loc = -1):
         '''
         Arrange four images into 2x2 grid, with the first image at a
-        specified location and others distributed randomly.
+        specified location and others distributed around the grid such 
+        that if their shapes are uneven they still align correctly.
         ### Arguments
         - `imgs` --- A list or array of four images, each with shape
-            (h, w, channel) to be arranged into a 2x2 grid.
+            (row, col, channel) to be arranged into a 2x2 grid.
         - `loc` --- Position where the first image from `imgs` should
             go in the grid. The mapping is
-            - 0: Top Left
-            - 1: Top Right
-            - 2: Bottom Left
-            - 3: Bottom Right
+            - 0: Top Left (NW)
+            - 1: Top Right (NE)
+            - 2: Bottom Left (SW)
+            - 3: Bottom Right (SE)
             - -1: Random
         ### Returns
         - `grid` --- The image grid, of shape (2*h, 2*w, channel)
@@ -501,25 +540,29 @@ class FourWayObjectDetectionTask(IsolatedObjectDetectionTask):
             mapping of what was randomly assigned otherwise.
         '''
         # Rearrange `imgs` to put the first image in the right spot
-        # and to randomize position of the other images
+        # and to position of the other images in a grid around
 
         if loc == -1:
             loc = np.random.randint(4)
 
-        rand = np.array(imgs)[np.random.permutation(3)+1]
-        if loc == 0:
-            imgs = [imgs[0], rand[0], rand[1], rand[2]]
-        elif loc == 1:
-            imgs = [rand[0], imgs[0], rand[1], rand[2]]
-        elif loc == 2:
-            imgs = [rand[0], rand[1], imgs[0], rand[2]]
-        elif loc == 3:
-            imgs = [rand[0], rand[1], rand[2], imgs[0]]
+        #rand = np.array(imgs)[np.random.permutation(3)+1]
+        imgs = FourWayObjectDetectionTask.order_by_loc(imgs, loc)
 
         return np.concatenate([
                 np.concatenate([imgs[0], imgs[1]], axis = 1),
                 np.concatenate([imgs[2], imgs[3]], axis = 1)],
             axis = 0), loc
+
+    @staticmethod
+    def order_by_loc(arr, loc):
+        if loc == 0:
+            return (arr[0], arr[1], arr[2], arr[3])
+        elif loc == 1:
+            return (arr[1], arr[0], arr[3], arr[2])
+        elif loc == 2:
+            return (arr[2], arr[3], arr[0], arr[1])
+        elif loc == 3:
+            return (arr[3], arr[2], arr[1], arr[0])
 
 
     def val_size(self, train_size):
@@ -577,7 +620,7 @@ def score_logregs(logregs, encodings, ys):
 
 def score_logregs_precomputed(preds, decision, ys):
     per_cat = {}
-    for c in encodings:
+    for c in preds:
         per_cat[c] = {
             'acc': sk_metric.accuracy_score(ys[c], preds[c]),
             'precision': sk_metric.precision_score(ys[c], preds[c]),
@@ -604,7 +647,7 @@ def score_logregs_precomputed(preds, decision, ys):
 
 
 
-def model_encodings(model, decoders, imgs, mods = {}):
+def model_encodings(model, decoders, imgs, mods = {}, cuda = False):
     '''
     ### Arguments
     - `model` --- A PyTorch model, presumably CORNet
@@ -614,6 +657,7 @@ def model_encodings(model, decoders, imgs, mods = {}):
     - `imgs` --- Either an array of shape (n, h, w, c) giving
         the images to be encoded, or a dictionary mapping
         categories to arrays of that type.
+    - `cuda` --- Force run on GPU, assumes `imgs` are GPU tensors.
     ### Returns
     - `encodings` --- Model encodings of `imgs`. Either an array
         of shape (n_imgs, n_features) if `imgs` was an array, or
@@ -621,17 +665,20 @@ def model_encodings(model, decoders, imgs, mods = {}):
         was passed as a dictionary.
     '''
     if isinstance(imgs, dict):
-        return {c: model_encodings(model, decoders, imgs[c], mods)
+        return {c: model_encodings(model, decoders, imgs[c],
+                                   mods, cuda = cuda)
                 for c in imgs}
     else:
         decoder_bypass = {l: LayerBypass() for l in decoders}
         mgr = nm.NetworkManager.assemble(model, imgs,
-                mods = {**mods, **decoder_bypass})
+                mods = {**mods, **decoder_bypass},
+                cuda = cuda)
         return mgr.computed[(0,)].cpu().detach().numpy()
 
 
 def fit_logregs(model, decoders, task, mods = {},
-                train_size = 30, shuffle = False):
+                train_size = 30, shuffle = False,
+                verbose = False):
     '''
     Fit linear decoders to a model and a task.
     ### Arguments
@@ -657,13 +704,15 @@ def fit_logregs(model, decoders, task, mods = {},
     regmods = {}
 
     for c in task.cats:
+        if verbose:
+            print(f"Category: {c}")
         imgs, ys = task.train_set(c, train_size, shuffle=shuffle)[:2]
         all_ys[c] = ys
         all_imgs[c] = imgs
         encodings[c] = model_encodings(
             model, decoders, imgs, mods = mods)
 
-        skregs[c] = LogisticRegression(solver = 'liblinear')
+        skregs[c] = LogisticRegression(solver = 'liblinear', max_iter = 1000)
         skregs[c].fit(encodings[c], ys)
         regmods[c] = ClassifierMod(
             skregs[c].coef_,
@@ -674,35 +723,138 @@ def fit_logregs(model, decoders, task, mods = {},
 
 
 def voxel_decision_grads(voxels, model, decoders, imgs, ys, regs,
-                         mods = {}):
+                         mods = {}, no_grads = False, batch_size = None,
+                         verbose = True, batch_callback = None):
+    '''
+    ### Arguments
+    - `no_grads` --- Don't compute gradients. Useful if you just want
+    to get the supporting information without running (slow) backprop.
+    ### Returns
+    `grads` --- Nested dictionary with outer key giving category
+        and inner giving unit layer (or will be `None` if no_grads
+        was passed as `True`). Each value is an array giving
+        the gradient of a unit on an image, arranged in shape
+        (n_img, n_unit).
+    `acts` --- Nested dictionary with outer key giving category
+        and inner giving unit layer. Each value is an array giving
+        the activation of a unit on an image, arranged in shape
+        (n_img, n_unit).
+    `fn` --- Dictionary mapping categories to arrays of decision
+        function values on each image. Values are numpy arrays
+        with shape (n_img)
+    `pred` --- Dictionary mapping categories to arrays of binary
+        classification predictions on each image. Values are
+        numpy arrays with shape (n_img)
+    `ys` --- Dictionary mapping categories to arrays of binary
+        classification ground truth on each image. Values are
+        numpy arrays with shape (n_img). This is a simple passthrough
+        of the `ys` parameter integrated into the results format.
+    `score_cat` --- Dictionary mapping categories to percent
+        accuracy scores.
+    `score_ovrl` --- A single float giving percent accuracy score.
+    `batch_size` --- Size of batches to run. Can be None to run
+        without batching the data.
+    '''
     grads = {}
     acts = {}
+    pred = collections.defaultdict(list)
+    fn = collections.defaultdict(list)
+    score_cat = {}
+    score_ovrl = {}
 
-    for c in regs:
-        # Run encodings with voxel gradients tracked
-        decoder_bypass = {l: LayerBypass() for l in decoders}
-        logreg = {(0,): regs[c]}
-        mgr = nm.NetworkManager.assemble(model, imgs[c],
-                mods = nm.mod_merge(mods, decoder_bypass, logreg),
-                with_grad = True)
+    for i_c, c in enumerate(regs):
+        # Print progress updates
+        if verbose:
+            print("\rClass: " + str(i_c+1) + " / " + str(len(regs)))
 
-        # Backprop the gradients to the voxels
-        back_mask = torch.ones_like(mgr.computed[(0,)])
-        mgr.computed[(0,)].backward(back_mask)
+        batches = (np.arange(len(imgs[c])), )
+        if batch_size is not None:
+            if len(imgs[c]) > batch_size:
+                batches = np.array_split(batches[0], len(imgs[c]) // batch_size)
 
-        # Make space for the results of this run
         for res_dict in (grads, acts):
-            res_dict[c] = {}
+            res_dict[c] = collections.defaultdict(list)
 
-        # Pull gradients from the model and score its performance
-        for l in voxels:
-            batch = mgr.computed[l].cpu()
-            grads[c][l] = voxels[l].index_into_batch(
-                batch.grad_nonleaf.detach().numpy(), i_vox = None)
-            acts[c][l] = voxels[l].index_into_batch(
-                batch.detach().numpy(), i_vox = None)
+        # NOTE: code assumes we'll still see images in expected order
+        for batch_n, batch_ix in enumerate(batches):
+            if verbose:
+                print(f"Batch {batch_ix} / {len(batches)}")
 
-    return grads, acts
+            # Run encodings with voxel gradients tracked
+            if verbose: print(f"Running")
+            decoder_bypass = {l: LayerBypass() for l in decoders}
+            logreg = {(0,): regs[c]}
+            mgr = nm.NetworkManager.assemble(model, imgs[c][batch_ix],
+                    mods = nm.mod_merge(mods, decoder_bypass, logreg),
+                    with_grad = True)
+
+            # Backprop the gradients to the voxels
+            if not no_grads:
+                if verbose: print(f"Backpropagating")
+                back_mask = torch.ones_like(mgr.computed[(0,)])
+                mgr.computed[(0,)].backward(back_mask)
+
+            # Pull gradients from the model and score its performance
+            if verbose:
+                print(f"Extracting data")
+            if not no_grads:
+                batch_grads = {}
+            batch_acts = {}
+            for l in voxels:
+                batch = mgr.computed[l].cpu()
+                if not no_grads:
+                    batch_grads[l] = voxels[l].index_into_batch(
+                        batch.grad_nonleaf.detach().numpy(), i_vox = None)
+                batch_acts[l] = voxels[l].index_into_batch(
+                    batch.detach().numpy(), i_vox = None)
+            batch_fn = mgr.computed[(0,)].detach().numpy()
+            batch_pred = regs[c].predict_on_fn(batch_fn)
+
+            if batch_callback is None:
+                for l in voxels:
+                    if not no_grads:
+                        grads[c][l].append(batch_grads[l])
+                    acts[c][l].append(batch_acts[l])
+                fn[c].append(batch_fn)
+                pred[c].append(batch_pred)
+            else:
+                batch_callback(
+                    c, batch_ix,
+                    batch_grads if not no_grads else None,
+                    batch_acts,
+                    batch_fn,
+                    batch_pred,
+                    ys[c][batch_ix])
+
+                # Clean intermediate outputs if possible
+                if not no_grads:
+                    del batch_grads
+                del batch_acts, batch_fn, batch_pred; gc.collect()
+
+            # Definitely clean up the network manager
+            del mgr; gc.collect()
+
+        # Concatenate batches
+        if batch_callback is None:
+            if verbose: print(f"Concatenating")
+            for l in voxels:
+                if not no_grads:
+                    grads[c][l] = np.concatenate(grads[c][l])
+                acts[c][l] = np.concatenate(acts[c][l])
+            fn[c] = np.concatenate(fn[c])
+            pred[c] = np.concatenate(pred[c])
+
+        # End progress update line
+        print()
+
+    if batch_callback is None:
+        s_ovrl, s_cat = score_logregs_precomputed(pred, fn, ys)
+        for c in regs:
+            score_cat[c] = s_cat[c]['acc']
+            score_ovrl = s_ovrl['acc']
+
+        return (grads if not no_grads else None,
+            acts, fn, pred, ys, score_cat, score_ovrl)
 
 
 
@@ -722,7 +874,7 @@ def voxel_decision_grads(voxels, model, decoders, imgs, ys, regs,
 
 
 
-def generate_dataset(imagenet_index, output, image_size = 224):
+def generate_dataset(imagenet_index, output, image_size = 224, blacklist = (), seed = 1):
     '''Process ImageNet data down to an archived dataset
     that is quickly readable for training.
     ### Arguments
@@ -733,13 +885,18 @@ def generate_dataset(imagenet_index, output, image_size = 224):
     base_dir = os.path.dirname(imagenet_index)
     index = pd.read_csv(imagenet_index)
     cats = index['category'].unique()
+    metacols = [col for col in index.columns if col not in ('category', 'n', 'neg_n')]
 
     max_ns = [max(index.iloc[np.where(index['category'] == c)]['n'])
               for c in cats]
     limit_n = min(max_ns)
+    rng = np.random.RandomState(seed)
 
+    metadata = {'cat': [], 'n':[], **{col: [] for col in metacols}}
     with h5py.File(output, "w") as f:
         for cat in tqdm.tqdm(cats, desc = "Category"):
+            if cat in blacklist: continue
+
             dset = f.create_dataset(cat,
                 (limit_n, image_size, image_size, 3),
                 dtype = 'i')
@@ -748,10 +905,19 @@ def generate_dataset(imagenet_index, output, image_size = 224):
             first_n = index['n'] < limit_n
             idxs = np.where(cat_images & first_n)[0]
             paths = index['path'].iloc[idxs]
+            index_metadata = index.iloc[idxs]
 
-            for i, pth in enumerate(tqdm.tqdm(paths, desc = "   Image")):
-                img = skvideo.io.vread(os.path.join(base_dir, pth))
-                img = img[0]
+            ordering = rng.permutation(len(paths))
+            for out_i, in_i in enumerate(tqdm.tqdm(ordering, desc = "   Image")):
+                filepath = os.path.join(base_dir, paths.iloc[in_i])
+                if paths.iloc[in_i].endswith('.tif'):
+                    from PIL import Image
+                    with Image.open(filepath) as imgfile:
+                        img = np.array(imgfile)
+                    img = np.tile(img[:, :, None], [1, 1, 3]) * 255
+                else:
+                    img = skvideo.io.vread(filepath)
+                    img = img[0]
                 factor = image_size/min(img.shape[0], img.shape[1])
                 img = scimg.zoom(img, [factor, factor, 1], order = 1)
 
@@ -762,10 +928,21 @@ def generate_dataset(imagenet_index, output, image_size = 224):
                                   bounding))
                 end = tuple(map(operator.add, start, bounding))
                 slices = tuple(map(slice, start, end))
-                dset[i, ...] = img[slices]
+                dset[out_i, ...] = img[slices]
 
 
-def _neg_iter(task, cat, seed = 1):
+                metadata['cat'].append(cat)
+                metadata['n'].append(out_i)
+                for col in metacols:
+                    metadata[col].append(index_metadata[col].iloc[in_i])
+    if output.endswith('.h5'):
+        metadata_output = output[:-3] + '_meta.csv'
+    else:
+        metadata_output = output + '_meta.csv'
+    pd.DataFrame(metadata).to_csv(metadata_output, index = False)
+
+
+def _neg_iter(task, cat, seed = 1, metadata_df = None):
     max_n = task.h5[task.cats[0]].shape[0]
     rng = np.random.RandomState(seed)
     neg_cats = [c for c in task.cats if c != cat]
@@ -773,27 +950,55 @@ def _neg_iter(task, cat, seed = 1):
     while True:
         for i in range(max_n):
             for c in rng.permutation(neg_cats):
-                yield task._load_images(c, order[i], read_order = 1)
+                yield (
+                    task._load_images(c, order[i], read_order = 1),
+                    None if metadata_df is None else metadata_df[c].iloc[order[i]]
+                )
 
 
-def cache_iso_task(imagenet_h5, output, image_size = 224, seed = 1):
+def cache_iso_task(
+        imagenet_h5, output, image_size = 224, seed = 1,
+        blacklist = (), metadata_csv = None):
     '''Process an imagenet dataset into a format where it can
     be almost instantaneously read as IsolatedObjectDetectionTask data.'''
 
     task = IsolatedObjectDetectionTask(imagenet_h5, image_size)
+    if metadata_csv is not None:
+        in_metadata = pd.read_csv(metadata_csv)
+        metadata_cols = [col for col in in_metadata.columns if col not in ('cat', 'n')]
+        in_metadata = {c: c_data for c, c_data in in_metadata.groupby('cat')}
+    else:
+        metadata_cols = []
+    out_metadata = {'target': [], 'cat': [], 'n': [], **{col: [] for col in metadata_cols}}
     with h5py.File(output, "w") as f:
-         for i, cat in enumerate(tqdm.tqdm(task.cats, desc = "Category")):
+        for i, cat in enumerate(tqdm.tqdm(task.cats, desc = "Category")):
+            if cat in blacklist: continue
 
             # Load and save images
-            negs = _neg_iter(task, cat, seed = seed)
+            negs = _neg_iter(
+                task, cat, seed = seed,
+                metadata_df = in_metadata if metadata_csv is not None else None)
             cat_n = task.h5[cat].shape[0]
             dset = f.create_dataset(cat,
                 (2*cat_n, image_size, image_size, 3),
                 dtype = 'i')
             dset[::2] = task._load_images(cat, range(cat_n),
                                              read_order = 1)
-            neg_imgs = [next(negs)[0] for _ in range(cat_n)]
-            dset[1::2] = np.array(neg_imgs)
+            pos_metadata = {
+                'cat': [cat] * cat_n,
+                'target': [cat] * cat_n,
+                'n': np.arange(2*cat_n)[::2]}
+            for col in metadata_cols:
+                pos_metadata[col] = in_metadata[cat][col].iloc[:cat_n]
+            neg_choices = [next(negs) for _ in range(cat_n)]
+            neg_imgs, neg_meta = list(zip(*neg_choices))
+            dset[1::2] = np.array(neg_imgs)[:, 0]
+            neg_metadata = {
+                'cat': [row['cat'] for row in neg_meta],
+                'target': [cat] * cat_n,
+                'n': np.arange(2*cat_n)[1::2]}
+            for col in metadata_cols:
+                neg_metadata[col] = [row[col] for row in neg_meta]
 
             # Save classification targets
             dset = f.create_dataset(cat + '_y',
@@ -801,25 +1006,70 @@ def cache_iso_task(imagenet_h5, output, image_size = 224, seed = 1):
             dset[::2] = np.ones(cat_n, dtype = bool)
             dset[1::2] = np.zeros(cat_n, dtype = bool)
 
+            flatten2d = lambda x, y: [a for b in zip(x, y) for a in b]
+            out_metadata['cat'] += flatten2d(pos_metadata['cat'], neg_metadata['cat'])
+            out_metadata['target'] += flatten2d(pos_metadata['target'], neg_metadata['target'])
+            out_metadata['n'] += flatten2d(pos_metadata['n'], neg_metadata['n'])
+            for col in metadata_cols:
+                out_metadata[col] += flatten2d(pos_metadata[col], neg_metadata[col])
+    if output.endswith('.h5'):
+        metadata_output = output[:-3] + '_meta.csv'
+    else:
+        metadata_output = output + '_meta.csv'
+    pd.DataFrame(out_metadata).to_csv(metadata_output, index = False)
 
 
 
-def cache_four_task(imagenet_h5, output, image_size = 112, seed = 1, loc = -1):
+def cache_four_task(
+        imagenet_h5, output, image_size = 112, seed = 1,
+        loc = -1, blacklist = (), metadata_csv = None):
     task = FourWayObjectDetectionTask(imagenet_h5, image_size)
+    cats = [c for c in task.cats if c not in blacklist]
+    if metadata_csv is not None:
+        in_metadata = pd.read_csv(metadata_csv)
+        metadata_cols = [col for col in in_metadata.columns if col not in ('cat', 'n')]
+        in_metadata = {c: c_data for c, c_data in in_metadata.groupby('cat')}
+    else:
+        metadata_cols = []
+    loc_names = ['tl', 'tr', 'bl', 'br']
+    out_metadata = {'target': [], 'target_loc': [],
+        **{f'{loc}_cat': [] for loc in loc_names},
+        **{f'{loc}_src_n': [] for loc in loc_names},
+        **{f'{loc}_{col}': [] for col in metadata_cols for loc in loc_names}}
     with h5py.File(output, "w") as f:
-         for i, cat in enumerate(tqdm.tqdm(task.cats, desc = "Category")):
+         for i, cat in enumerate(tqdm.tqdm(cats, desc = "Category")):
 
             # Load and save images
-            negs = _neg_iter(task, cat, seed = seed)
+            negs = _neg_iter(task, cat, seed = seed + i,
+                metadata_df = in_metadata if metadata_csv is not None else None)
             cat_n = task.h5[cat].shape[0]
 
+            # load target images and associated metadata
             true_images = task._load_images(cat, range(cat_n), read_order=1)
-            false_images = [next(negs)[0]
-                for _ in tqdm.trange(7*cat_n, desc = 'Negative')]
+            pos_meta = {
+                'cat': pd.Series([cat] * cat_n),
+                'src_n': pd.Series(np.arange(cat_n))}
+            for col in metadata_cols:
+                pos_meta[col] = in_metadata[cat][col].iloc[:cat_n]
 
+            # load distractor images and associated metadata
+            false_images, false_meta = list(zip(*[next(negs)
+                for _ in tqdm.trange(7*cat_n, desc = 'Negative')]))
+            false_images = np.array(false_images)[:, 0]
+            neg_meta = {
+                'cat': pd.Series([row['cat'] for row in false_meta]),
+                'src_n': pd.Series([row['n'] for row in false_meta])}
+            for col in metadata_cols:
+                neg_meta[col] = pd.Series([row[col] for row in false_meta])
+
+            # separate the distractor images into ones that will go in positive
+            # examples (_posarr) and ones that will go in negative examples
             false_images_posarr = false_images[:3*cat_n]
             false_images = false_images[3*cat_n:]
+            neg_meta_posarr = {k: v.iloc[:3*cat_n] for k, v in neg_meta.items()}
+            neg_meta = {k: v.iloc[3*cat_n:] for k, v in neg_meta.items()}
 
+            # create space in the HDF5 archive
             imgs = f.create_dataset(cat,
                 (2*cat_n, 2*image_size, 2*image_size, 3),
                 dtype = 'i')
@@ -828,16 +1078,49 @@ def cache_four_task(imagenet_h5, output, image_size = 112, seed = 1, loc = -1):
             locs = f.create_dataset(cat + '_loc',
                 (2*cat_n,), dtype = 'i')
 
+            # arrange the loaded images into composites and put them in the HDF5
+            # and put associated metadata into correct column
             for i in range(cat_n):
                 array_posimg = false_images_posarr[3*i:3*(i+1)]
                 imgs[2*i], locs[2*i] = task._arrange_grid(
                     np.concatenate([[true_images[i]], array_posimg]),
                     loc = loc)
                 ys[2*i] = True
+                # arrange metadata to agree with location of target and distracotr images
+                all_metacols = ['cat', 'src_n', *metadata_cols]
+                arranged_meta = task.order_by_loc([
+                    {c: pos_meta[c].iloc[i] for c in all_metacols},
+                    {c: neg_meta_posarr[c].iloc[3*i] for c in all_metacols},
+                    {c: neg_meta_posarr[c].iloc[3*i+1] for c in all_metacols},
+                    {c: neg_meta_posarr[c].iloc[3*i+2] for c in all_metacols}
+                ], locs[2*i])
+                out_metadata['target'].append(cat)
+                out_metadata['target_loc'].append(loc_names[locs[2*i]])
+                for loc_i, loc_name in enumerate(loc_names):
+                    for col in all_metacols:
+                        out_metadata[f'{loc_name}_{col}'].append(arranged_meta[loc_i][col])
+
                 imgs[2*i+1], locs[2*i+1] = task._arrange_grid(
                     false_images[4*i:4*(i+1)],
                     loc = loc)
                 ys[2*i+1] = False
+                # arrange metadata to agree with location of distractor images
+                arranged_meta = task.order_by_loc([
+                    {c: neg_meta[c].iloc[4*i  ] for c in all_metacols},
+                    {c: neg_meta[c].iloc[4*i+1] for c in all_metacols},
+                    {c: neg_meta[c].iloc[4*i+2] for c in all_metacols},
+                    {c: neg_meta[c].iloc[4*i+3] for c in all_metacols}
+                ], locs[2*i + 1])
+                out_metadata['target'].append(cat)
+                out_metadata['target_loc'].append(loc_names[locs[2*i]])
+                for loc_i, loc_name in enumerate(loc_names):
+                    for col in all_metacols:
+                        out_metadata[f'{loc_name}_{col}'].append(arranged_meta[loc_i][col])
+    if output.endswith('.h5'):
+        metadata_output = output[:-3] + '_meta.csv'
+    else:
+        metadata_output = output + '_meta.csv'
+    pd.DataFrame(out_metadata).to_csv(metadata_output, index = False)
 
 
 
@@ -873,11 +1156,11 @@ class DistilledDetectionTask(IsolatedObjectDetectionTask):
             or -1 to read from the back of the archive.
         ### Returns
         - `imgs` --- A collection of images for a binary
-            classification. Will be of size (2*n, 3, 224, 224).
+            classification. Will be of size (n, 3, 224, 224).
             These will contain `n` images containing the object
             category and `n` not containing the object category
             in random order.
-        - 'ys' --- An array of shape (2*n,) taking values either
+        - 'ys' --- An array of shape (n,) taking values either
             1 or 0 to indicate whether each image in `imgs`
             contains an object of the category
         '''
@@ -895,12 +1178,18 @@ class DistilledDetectionTask(IsolatedObjectDetectionTask):
             ys = self.h5[cat+'_y'][start:stop]
             if cat+'_loc' in self.h5.keys():
                 locs =  self.h5[cat+'_loc'][start:stop]
+            # ixs = self.metadata[cat].iloc[start:stop]
+            ixs = np.arange(start, stop)
+
         else:
             if load_imgs:
                 imgs = self.h5[cat][-stop-1:-start-1]
             ys = self.h5[cat+'_y'][-stop-1:-start-1]
             if cat+'_loc' in self.h5.keys():
                 locs =  self.h5[cat+'_loc'][-stop-1:-start-1]
+            ixs = np.arange(
+                len(self.h5[cat])-stop-1,
+                len(self.h5[cat])-start-1)
 
         # Shuffle
         if shuffle:
@@ -910,6 +1199,7 @@ class DistilledDetectionTask(IsolatedObjectDetectionTask):
                 imgs = imgs[shuf]
             if cat+'_loc' in self.h5.keys():
                 locs = locs[shuf]
+            ixs = ixs[shuf]
 
         # Normalize how CORNet expects, and shift channel
         # dimension to torch format
@@ -917,19 +1207,51 @@ class DistilledDetectionTask(IsolatedObjectDetectionTask):
             imgs = torch.tensor(np.moveaxis(imgs, -1, 1)).float()
             imgs = video_gen.batch_transform(imgs, video_gen.normalize)
             if cat+'_loc' in self.h5.keys():
-                return imgs, ys, locs
+                return imgs, ys, locs, ixs
             else:
-                return imgs, ys
+                return imgs, ys, ixs
         else:
             if cat+'_loc' in self.h5.keys():
-                return ys, locs
+                return ys, locs, ixs
             else:
-                return ys
-
+                return ys, ixs
 
     def val_size(self, train_size):
         return len(self.h5[self.cats[0]]) - train_size
 
 
+class FakeDetectionTask(IsolatedObjectDetectionTask):
+    '''
+    Utility task to emulate an IsolatedObjectDetectionTask that
+    simply returns random noise images.
 
+    Mainly intended for local use where one doesn't have the
+    capacity to store the imagenet composite dataset but still
+    wants to test code.'''
+
+    def __init__(self, cats, image_size, channels,
+        sim_imgs = True, sim_locs = True):
+
+        self.cats = cats
+        self.sample_shape = (channels, image_size, image_size)
+        self.sim_imgs = sim_imgs
+        self.sim_locs = sim_locs
+        self.channels = channels
+        self.image_size = image_size
+
+    def _load_set(self, cat, n, read_order, shuffle = False):
+        imgs = torch.empty(n,
+            self.channels,
+            self.image_size,
+            self.image_size
+            ).uniform_(-1., 1.)
+        imgs[..., self.image_size // 40::self.image_size // 20, :] = 5.
+        imgs[..., :, self.image_size // 40::self.image_size // 20] = 5.
+        ys = torch.linspace(0, 1, n)[np.random.permutation(n)] > 0.5
+        locs = np.int_(np.floor(np.random.rand(n) * 5))
+        # Match the return profile of a DistilledDetectionTask
+        if self.sim_imgs and self.sim_locs: return imgs, ys, locs
+        elif self.sim_imgs: return imgs, ys
+        elif self.sim_locs: return ys, locs
+        else: return ys
 

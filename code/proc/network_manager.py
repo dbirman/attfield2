@@ -2,7 +2,9 @@ from pprint import pprint
 from torch import nn
 import torch
 
-class LayerMod(object):
+NULL_HOOK = lambda x: None
+
+class LayerMod(nn.Module):
     
     """Base LayerMod class implementing an identity modification."""
     
@@ -28,15 +30,19 @@ class NetworkManager(object):
     __curr_mgr = None # Temporary until NullManager is defined
     __mgr_hist = []
     
-    def __init__(self, mods = {}, with_grad = False):
+    def __init__(self, mods = {}, with_grad = False, cuda = False):
         self.full_idx = ()
         self.curr_idx = 0
         self.computed = {}
         self.modules = {}
+        self.grads = {}
+        self.nonleaf_hooks = {}
         self.mods = mods
         self.saved_curr_idx = []
         self.with_grad = with_grad
-    
+        self.cuda = cuda
+
+
     def pre_forward(self, args, kwargs):
         """Register movement INTO a child branch of the computation tree.
         ### Arguments
@@ -58,7 +64,7 @@ class NetworkManager(object):
         # Apply any mods to the layer inputs
         cache = None
         for mod in self.mods_to_apply(self.full_idx):
-            args, kwargs, cache = mod.pre_layer(*args, *kwargs)
+            args, kwargs, cache = mod.pre_layer(*args, **kwargs)
         return args, kwargs, cache
     
     def post_forward(self, module, outputs, cache):
@@ -72,7 +78,19 @@ class NetworkManager(object):
         for mod in self.mods_to_apply(self.full_idx):
             outputs = mod.post_layer(outputs, cache)
         if isinstance(outputs, torch.Tensor) and self.with_grad:
-            self._require_nonleaf_grad(outputs)
+            self._require_nonleaf_grad(outputs, self.full_idx)
+
+        # Bind the computational graph to involved tensors
+        # This is used in the custom backprop
+        '''
+        if self.with_grad:
+            if isinstance(outputs, tuple):
+                for t in outputs:
+                    if t.grad_fn is not None:
+                        t.grad_fn.metadata['variable'] = t
+            else:
+                outputs.grad_fn.metadata['variable'] = outputs
+        '''
 
         # Log results of copmutation done as this step
         self.computed[self.full_idx] = outputs
@@ -83,20 +101,32 @@ class NetworkManager(object):
         
         return outputs
     
-    def _require_nonleaf_grad(self, t):
+    def _require_nonleaf_grad(self, t, key):
         '''Apply torch hook to force the tensor `t` to have its gradients
         calculated during a backprop.'''
         def hook(g):
-            t.grad_nonleaf = g
-        t.register_hook(hook)
+            g._isnlg = True
+            self.grads[key] = g
+        self.nonleaf_hooks[key] = t.register_hook(hook)
+
+    def close_hooks(self):
+        for hook in self.nonleaf_hooks.values():
+            hook.remove()
+
     
     def mods_to_apply(self, layer_idx):
+        # Put mods on GPU if requested
+        if self.cuda:
+            D = lambda t: t.cuda()
+        else:
+            D = lambda t: t.cpu()
+
         if layer_idx in self.mods:
             if isinstance(self.mods[layer_idx], LayerMod):
-                return (self.mods[layer_idx],)
+                return (D(self.mods[layer_idx]),)
             else:
                 # self.mods[layer_idx] will be of type tuple otherwise
-                return self.mods[layer_idx]
+                return tuple(D(m) for m in self.mods[layer_idx])
         else:
             return ()
     
@@ -107,7 +137,7 @@ class NetworkManager(object):
         return self
     
     def __exit__(self, type, value, traceback):
-        NetworkManager.__curr_mgr =  NetworkManager.__mgr_hist.pop(-1)
+        NetworkManager.__curr_mgr = NetworkManager.__mgr_hist.pop(-1)
         
     
     @staticmethod
@@ -115,23 +145,23 @@ class NetworkManager(object):
         return NetworkManager.__curr_mgr
 
     @staticmethod
-    def assemble(model, inputs, mods = {}, with_grad = False):
+    def assemble(model, inputs, mods = {}, with_grad = False, cuda = False):
 
-        mgr = NetworkManager(mods = mods, with_grad = with_grad)
+        mgr = NetworkManager(mods = mods, with_grad = with_grad, cuda = cuda)
         if with_grad:
             inputs.requires_grad_()
         with mgr:
-            if torch.cuda.is_available():
-                computed = model.cuda()(inputs.cuda())
-            else:
-                computed = model(inputs)
+            if cuda:
+                model.cuda()
+                inputs = inputs.cuda()
+            computed = model(inputs)
         return mgr
 
 
     def summarize(self):
         for k in self.modules:
             print(k, ":", str(self.modules[k]) + " => " +
-                          str(self.computed[k].size()))
+                          str(self.computed[k].shape))
 
 
     def save(filename):
@@ -178,7 +208,8 @@ def patch(klass):
 
         def call_wrapper(self, *args, **kwargs):
             mgr = NetworkManager.current()
-            args, kwargs, cache = mgr.pre_forward(args, kwargs)
+            args, kwargs, cache = mgr.pre_forward(args, {**kwargs, '__layer': self})
+            if '__layer' in kwargs: kwargs.pop('__layer')
             ret = call_wrapper.old(self, *args, **kwargs)
             ret = mgr.post_forward(self, ret, cache)
             return ret
@@ -190,3 +221,4 @@ def patch(klass):
         patch(subklass)
 
 patch(nn.Module)
+

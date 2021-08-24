@@ -1,0 +1,5 @@
+export DATA=data
+export PLOTS=plots
+export CODE=code
+export SHRLK_DATA=/scratch/users/kaifox/attfield/data
+export SHRLK_PLOTS=/scratch/users/kaifox/attfield/plots

@@ -7,8 +7,8 @@ from scipy import ndimage
 from enum import Enum
 from torchvision import transforms
 import torch
-import cv2
 import os
+
 
 
 normalize = transforms.Normalize(
@@ -114,6 +114,10 @@ def sliding_bar(framesize, width, frames, angle):
         return video
 
 
+
+
+
+
 def sliding_bar_sequence(framesize, width, frames):
     '''
     Produce a square black frame with a white bar sliding across in
@@ -132,6 +136,7 @@ def sliding_bar_sequence(framesize, width, frames):
     videos = [sliding_bar(framesize, width, frames//8, angle)
               for i, angle in enumerate(CardinalDirection)]
     return np.concatenate(videos)
+
 
 
 def checker_sqare(framesize, width):
@@ -189,6 +194,7 @@ def cifar_images(framesize, n):
         theta = np.random.uniform(low = -180, high=180)
         t_x = np.random.uniform(low = -16, high = 16)
         t_y = np.random.uniform(low = -16, high = 16)
+        import cv2
         M = cv2.getRotationMatrix2D((framesize+t_x,framesize+t_y),theta,1)
         double_frame = cv2.warpAffine(double_frame, M, (framesize*2, framesize*2))
         frame = double_frame[framesize//2-16:framesize+framesize//2+16,
@@ -224,7 +230,7 @@ def color_rotation(framesize, frames):
     return batch_transform(torch.tensor(video).float(), normalize)
 
 
-def sine_rotation(framesize, frames, freqs = [20]):
+def sine_rotation(framesize, frames, freqs = [20], phase_rand = False):
     thetas = np.linspace(0, np.pi, frames)
     Bs = np.cos(thetas)[:, np.newaxis, np.newaxis]
     As = np.sin(thetas)[:, np.newaxis, np.newaxis]
@@ -233,7 +239,12 @@ def sine_rotation(framesize, frames, freqs = [20]):
     X, Y = np.meshgrid(basic_x, basic_y)
     grid = As * X[np.newaxis, ...] + Bs * Y[np.newaxis, ...]
 
-    videos = [np.sin((2*np.pi*F) * grid)/2 + 0.5
+    if phase_rand:
+        phases = np.random.uniform(low = 0, high = 2*np.pi, size = frames)
+    else:
+        phases = np.zeros(frames)
+    phases = phases[:, np.newaxis, np.newaxis]
+    videos = [np.sin((2*np.pi*F) * grid + phases)/2 + 0.5
               for F in freqs]
     video = np.tile(np.concatenate(videos)[:, np.newaxis, :, :],
                     [1, 3, 1, 1]) * 255
@@ -245,7 +256,7 @@ def sine_rotation(framesize, frames, freqs = [20]):
 MCGILL_CLASSES = ['Flowers', 'Fruits', 'LandWater',
                   'Textures', 'Foliage', 'ManMade']
 
-def mcgill_images(framesize, n, db = 'data/mcgill',
+def mcgill_images(framesize, n, db = 'archive/data/mcgill',
     classes = MCGILL_CLASSES):
     '''
     ### Arguments
@@ -311,16 +322,6 @@ def to_numpy_force(video):
         ret.append(np.stack(new_frame))
     return np.moveaxis(np.stack(ret), 1, -1)
 
-
-
-if __name__ == '__main__':
-    # video = sliding_bar_sequence(100, 7, 23*8)
-    
-    # checker = checker_diamonond(246, 20)
-    # exit()
-
-    #video = mcgill_images(64, 5)
-    skvideo.io.vwrite("data/test_video.mp4", video)
 
 
 

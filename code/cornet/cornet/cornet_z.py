@@ -18,7 +18,7 @@ class Identity(nn.Module):
     Helper module that stores the current tensor. Useful for accessing by name
     """
 
-    def forward(self, x):
+    def forward(self, x): 
         return x
 
 
@@ -77,3 +77,8 @@ def CORnet_Z():
             m.bias.data.zero_()
 
     return model
+
+
+def get_model(weight_root = Paths.data.join("models")):
+    from proc.cornet import load_cornet
+    return load_cornet('Z', model = CORnet_Z(), weight_root = weight_root)[0]

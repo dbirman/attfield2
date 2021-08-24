@@ -1,0 +1,9 @@
+
+py3=$HOME/proj/attfield/venv/bin/python3
+alias py3=$py3
+
+export LIB_SCRIPT=$HOME/proj/attfield/code/script/link_libs_shrlk.py
+
+export DATA=$SCRATCH/attfield/data
+export CODE=$HOME/proj/attfield/code
+export PLOTS=$SCRATCH/attfield/plots

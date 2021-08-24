@@ -71,10 +71,12 @@ class VoxelIndex():
                 yield (j, i), curr_idx, template
                 template.__setitem__((j,) + curr_idx, 0)
 
-    def backward_masks_fullbatch(self, manager):
+    def backward_masks_fullbatch(self, manager, cuda = False):
         masks = []
         tensor = manager.computed[self._layer]
         template = torch.zeros(tensor.size())
+        if cuda:
+            template = template.cuda()
         idxs = np.array(self._idx).T
         batch_slice = (slice(0, tensor.size()[0]),)
         for i in range(self.nvox()):
@@ -82,6 +84,7 @@ class VoxelIndex():
             template.__setitem__(batch_slice + curr_idx, 1)
             yield (i), curr_idx, template
             template.__setitem__(batch_slice + curr_idx, 0)
+        del template
 
     def backward_mask(self, computed, i_vox):
         """Return a backward mask for the i_vox-th voxel"""
@@ -135,7 +138,7 @@ class VoxelIndex():
                 by_layer[layer] = []
             idx = tuple(int(i) for i in v.split(';')[1].split('.'))
             by_layer[layer].append(idx)
-        return {l: VoxelIndex(layer, np.array(i).T.tolist())
+        return {l: VoxelIndex(l, np.array(i).T.tolist())
                 for l,i in by_layer.items()}
 
 

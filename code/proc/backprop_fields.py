@@ -11,6 +11,59 @@ import time
 import sys
 
 
+def vcorrcoef(X,y):
+    '''
+    Calculate correlation between many sequences and `y`.
+    This is equivalent to calling
+        for i in range(len(x)):
+            np.corrcoef(X[i,:], y)[0,1]
+    but should run much faster.
+    ### Arguments
+    - `X` --- A matrix with each variable as a row
+    - `y` --- The variable being compared to
+    ### Returns
+    - `r` --- A vector of correlation coefficients
+        with the same length as `X`.
+    '''
+    Xm = np.reshape(np.mean(X,axis=1),(X.shape[0],1))
+    ym = np.mean(y)
+    r_num = np.sum((X-Xm)*(y-ym),axis=1)
+    r_den = np.sqrt(np.sum((X-Xm)**2,axis=1)*np.sum((y-ym)**2))
+    r = r_num/r_den
+    return r
+
+
+def approx_grads(model, inputs, voxels, mods = {}):
+
+    manager = nm.NetworkManager.assemble(model, inputs, mods = mods)
+    inputs_pixelflat = inputs.reshape(inputs.shape[:2] + (-1,))
+
+    grads = {}
+    for layer, layer_vox in voxels.items():
+        print("Correlations for layer:", layer)
+        grads[layer] = np.zeros(
+            (layer_vox.nvox(),) + inputs.shape[1:],
+            dtype = np.float32)
+
+        acts = layer_vox.index_into_batch(
+            manager.computed[layer].cpu().detach().numpy(),
+            i_vox = None)
+        for i_vox in range(acts.shape[1]):
+            sys.stdout.write("\rVoxel: " + str(i_vox+1) + 
+                             " / " + str(layer_vox.nvox()))
+            sys.stdout.flush()
+            rs = np.array([
+                vcorrcoef(inputs_pixelflat[:, i_chnl].detach().numpy().T,
+                          acts[:, i_vox])
+                for i_chnl in range(inputs_pixelflat.shape[1])
+            ])
+            grads[layer][i_vox, ...] = rs.reshape(inputs.shape[1:])
+        print()
+    return grads
+        
+        
+
+
 
 def gradients_raw_fullbatch(model, inputs, voxels, approx_n = 20, mods = {}):
 

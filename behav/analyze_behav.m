@@ -1,8 +1,12 @@
 %% Analyze behavioral data from pilot
 % Josh and Kai did a pilot test on 2/28. This script loads their data and
 % checks the psychometric function as a function of duration.
+addpath(genpath(fullfile('~/proj/attfield2')));
+addpath(genpath(fullfile('~/proj/mgl')));
+addpath(genpath(fullfile('~/proj/gru')));
+addpath(genpath(fullfile('~/proj/mrTools')));
 
-subjs = [600 611 620 700];
+subjs = [600 611 620 700 99 731 733];
 
 SIDs = {};
 for si = 1:length(subjs)
@@ -206,16 +210,15 @@ for si = 1:length(adatas)
 end
 
 %% Plot sensitivity
-
-h = figure;
-
+SIDs{end+1} = 'all';
 yvalsdp = [0 1 2 3];
 yvalsauc = normcdf(yvalsdp./sqrt(2));
 yvalsauc = round(yvalsauc*100)/100;
 ylabels = arrayfun(@(x,y) sprintf('%1.0f/%0.2f',x,y),yvalsdp,yvalsauc,'UniformOutput',false);
 
 for si = 1:length(adatas)
-    subplot(length(adatas),1,si); hold on
+    h = figure; hold on
+    %subplot(length(adatas),1,si); hold on
     
     dp = squeeze(dps(si,:,:));
     
@@ -256,8 +259,8 @@ savepdf(h,fullfile('~/proj/attfield2/behav/figures/pilot_2020_12_08.pdf'));
 
 h = figure; hold on
 
-dp = squeeze(dps(4,:,:));
-dp_ci = squeeze(bootci(1000, @mean, squeeze(dps(1:3,:,:))));
+dp = squeeze(dps(end,:,:));
+dp_ci = squeeze(bootci(1000, @mean, squeeze(dps(1:(end-1),:,:))));
 dp_err = squeeze(dp_ci(2,:,:)) - dp;
 
 % distributed

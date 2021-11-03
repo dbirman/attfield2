@@ -4,3 +4,4 @@
 **/__pycache__
 code/scripts/proc/
 code/tests/proc/
+*.m~

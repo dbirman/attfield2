@@ -6,7 +6,7 @@ addpath(genpath(fullfile('~/proj/mgl')));
 addpath(genpath(fullfile('~/proj/gru')));
 addpath(genpath(fullfile('~/proj/mrTools')));
 
-subjs = [600 611 620 700 99 731];
+subjs = [600 611 620 700 99 731 733];
 
 SIDs = {};
 for si = 1:length(subjs)
@@ -72,15 +72,15 @@ end
 %    1      2     3      4         5               6    7    8
 % trial #  cat  focal   present  responsePresent  dur   tp   fa 
 
-% header = {'trial','category','focal','targetPresent','responsePresent','duration','tp','fa'};
-% 
-% tp = (adata(:,6)==1) .* (adata(:,7)==1); 
-% fa = (adata(:,6)==0) .* (adata(:,7)==1);
-% outdata = [(1:size(adata,1))' adata(:,2) adata(:,4) adata(:,6) adata(:,7) adata(:,8) tp fa];
-% 
-% outdata = outdata(~isnan(adata(:,7)),:);
-% 
-% csvwriteh(fullfile('~/proj/attfield2/behav/out.csv'),outdata,header);
+header = {'trial','category','focal','targetPresent','responsePresent','duration','tp','fa'};
+
+tp = (adata(:,6)==1) .* (adata(:,7)==1); 
+fa = (adata(:,6)==0) .* (adata(:,7)==1);
+outdata = [(1:size(adata,1))' adata(:,2) adata(:,4) adata(:,6) adata(:,7) adata(:,8) tp fa];
+
+outdata = outdata(~isnan(adata(:,7)),:);
+
+csvwriteh(fullfile('~/proj/attfield2/behav/out.csv'),outdata,header);
 
 %% Stack all data at end
 adatas{end+1} = [];
@@ -88,6 +88,15 @@ for ai = 1:(length(adatas)-1)
     adatas{end} = [adatas{end} ; adatas{ai}];
 end
 SIDs{end+1} = 'all';
+
+%% Check performance across categories
+catperf = [];
+
+ucats = unique(adata(:,3));
+
+for i = 1:length(ucats)
+    catperf(i) = nanmean(adata(adata(:,3)==ucats(i),9));
+end
 
 %% Save out data
 
@@ -179,23 +188,37 @@ end
 msdur = frameRate(1) * udur;
 
 %% Plot drift diffusion parameters
-h = figure;
-vs(isnan(vs)) = 0;
+h = figure; hold on
+% vs(isnan(vs)) = 0;
 
-for si = 1:length(adatas)
-    subplot(length(adatas),1,si); hold on
+for si = 8
+%     subplot(length(adatas),1,si); hold on
     title(SIDs{si});
     
     % distributed
     plot(msdur,squeeze(vs(si,:,1)),'ok');
     vfit1 = fitLog(msdur,squeeze(vs(si,:,1))');
     plot(vfit1.x,vfit1.y,'-k');
+    % focal
     plot(msdur,squeeze(vs(si,:,2)),'ob');
     vfit1 = fitLog(msdur,squeeze(vs(si,:,2))');
     plot(vfit1.x,vfit1.y,'-b');
 end
 savepdf(h,fullfile('~/proj/attfield2/behav/figures/drift_is_dprime.pdf'));
 
+%% FOR PAPER: Correlation of dp and v
+dp_subj = dps(1:7,:,:);
+v_subj = vs(1:7,:,:);
+
+% for each subject, compute correlation across durations for focal/dist
+for si = 1:7
+    for fi = 1:2
+        dat = [dp_subj(si,:,fi)' v_subj(si,:,fi)'];
+%         if any(isnan(dat,2))
+        temp = corrcoef(dat);
+        c(si,fi) = temp(1,2);
+    end
+end
 
 %% Plot RT
 h = figure;
@@ -264,23 +287,19 @@ dp_ci = squeeze(bootci(1000, @mean, squeeze(dps(1:(end-1),:,:))));
 dp_err = squeeze(dp_ci(2,:,:)) - dp;
 
 % distributed
+
+fitboth = fitLogModel(msdur,dp(:,2),dp(:,1));
 %     errbar(msdur,dp(:,1),dp_ci(:,1),'-k');
-fitfocal = fitLog(msdur,dp(:,1));
-plot(fitfocal.x,fitfocal.y,'-k','LineWidth',3);
+plot(fitboth.x,fitboth.y_d,'-k','LineWidth',3);
 errbar(msdur,dp(:,1),dp_err(:,1),'-k','LineWidth',3);
 p(1) = plot(msdur,dp(:,1),'o','MarkerFaceColor','k','MarkerEdgeColor','w','MarkerSize',15);
-%     fit = fitSatExponential(msdur,dp(:,1));
-%     plot(fit.x,fit.y,'--k');
-disp(sprintf('Focal d''(x) = %1.3f * log(%1.3f * x + 1)',fitfocal.params(1),fitfocal.params(2)));
+disp(sprintf('Focal d''(x) = %1.3f * log(%1.3f * x + 1)',fitboth.params(3)*fitboth.params(1),fitboth.params(2)));
 % focal
 %     errbar(msdur+.002,dp(:,2),dp_ci(:,2),'-b');
-fitdist = fitLog(msdur,dp(:,2));
-plot(fitdist.x,fitdist.y,'-r','LineWidth',3);
+plot(fitboth.x,fitboth.y_f,'-r','LineWidth',3);
 errbar(msdur,dp(:,2),dp_err(:,2),'-r','LineWidth',3);
 p(2) = plot(msdur,dp(:,2),'o','MarkerFaceColor','r','MarkerEdgeColor','w','MarkerSize',15);
-%     fit = fitSatExponential(msdur,dp(:,2));
-%     plot(fit.x,fit.y,'--b');
-disp(sprintf('Distributed d''(x) = %1.3f * log(%1.3f * x + 1)',fitdist.params(1),fitdist.params(2)));
+disp(sprintf('Distributed d''(x) = %1.3f * log(%1.3f * x + 1)',fitboth.params(1),fitboth.params(2)));
 
 yvalsdp = [0 1 2];
 yvalsauc = normcdf(yvalsdp./sqrt(2));
@@ -298,3 +317,92 @@ ylabel('Sensitivity (d''/AUC)');
 drawPublishAxis('figSize=[20,14]','yLabelOffset=-11/64','poster=1');
 
 savepdf(h,fullfile('~/proj/attfield2/behav/figures/pilot_poster.pdf'));
+
+%% PAPER: Find ms duration when d' > 1 for dist/focal
+
+for si = 1:7
+    fitboth = fitLogModel(msdur,squeeze(dps(si,:,2))',squeeze(dps(si,:,1))');
+
+    % save the x value at which d'>1
+    dp1d(si) = fitboth.x(find(fitboth.y_d>=1,1));
+    dp1f(si) = fitboth.x(find(fitboth.y_f>=1,1));
+    
+    % save the multiplier parameter for focal
+    dpmult(si) = fitboth.params(3);
+end
+
+dp1d_ci = bootci(10000,@nanmean,dp1d*1000);
+disp(sprintf('ms average to dp 1 distributed %1.1f [%1.1f, %1.1f]',mean(dp1d)*1000,dp1d_ci(1),dp1d_ci(2)));
+dp1f_ci = bootci(10000,@nanmean,dp1f*1000);
+disp(sprintf('ms average to dp 1 focal %1.1f [%1.1f, %1.1f]',mean(dp1f)*1000,dp1f_ci(1),dp1f_ci(2)));
+
+dpmult_ci = bootci(10000,@nanmean,dpmult);
+disp(sprintf('Distributed to focal d'' multiplier %1.2f [%1.2f, %1.2f]',mean(dpmult),dpmult_ci(1),dpmult_ci(2)));
+
+%% REPEAT analysis for drift rate
+vs_fix = vs;
+for di = 1:6
+    for fi = 1:2
+        temp = squeeze(vs(:,di,fi));
+        temp(isnan(temp)) = nanmean(temp);
+        vs_fix(:,di,fi) = temp;
+    end
+end
+
+clear dp1d dp1f dpmult
+for si = 1:7
+    fitboth = fitLogModel(msdur,squeeze(vs_fix(si,:,2))',squeeze(vs_fix(si,:,1))');
+
+    % save the x value at which d'>1
+    dp1d(si) = fitboth.x(find(fitboth.y_d>=0.05,1));
+    dp1f(si) = fitboth.x(find(fitboth.y_f>=0.05,1));
+    
+    % save the multiplier parameter for focal
+    dpmult(si) = fitboth.params(3);
+end
+
+dp1d_ci = bootci(10000,@nanmean,dp1d*1000);
+disp(sprintf('ms average to dp 1 distributed %1.1f [%1.1f, %1.1f]',mean(dp1d)*1000,dp1d_ci(1),dp1d_ci(2)));
+dp1f_ci = bootci(10000,@nanmean,dp1f*1000);
+disp(sprintf('ms average to dp 1 focal %1.1f [%1.1f, %1.1f]',mean(dp1f)*1000,dp1f_ci(1),dp1f_ci(2)));
+
+dpmult_ci = bootci(10000,@nanmean,dpmult);
+disp(sprintf('Distributed to focal d'' multiplier %1.2f [%1.2f, %1.2f]',mean(dpmult),dpmult_ci(1),dpmult_ci(2)));
+
+%% CHECK IF OTHER DRIFT DIFFUSION PARAMETERS CHANGE
+h = figure; hold on
+vs_ = squeeze(nanmean(vs));
+
+for si = 1:7
+    vsdist = squeeze(vs(si,:,1))';
+    vsfocal = squeeze(vs(si,:,2))';
+    vsdist(isnan(vsdist)) = nanmean(vsdist);
+    vsfocal(isnan(vsfocal)) = nanmean(vsfocal);
+    fitboth = fitLogModel(msdur,vsfocal,vsdist);
+    va(si) = fitboth.params(3);
+end
+plot(msdur,vs_(:,1),'ok');
+plot(msdur,vs_(:,2),'or');
+
+
+h = figure; hold on
+Ters(Ters<0) = 0;
+ter_ = squeeze(nanmean(Ters));
+
+for si = 1:7
+    terdist = squeeze(Ters(si,:,1))';
+    terfocal = squeeze(Ters(si,:,2))';
+    terdist(isnan(terdist)) = nanmean(terdist);
+    terfocal(isnan(terfocal)) = nanmean(terfocal);
+    fitboth = fitLogModel(msdur,terfocal,terdist);
+    tera(si) = fitboth.params(3);
+end
+plot(msdur,ter_(:,1),'ok');
+plot(msdur,ter_(:,2),'or');
+
+Tersno0 = Ters;
+Tersno0(Tersno0==0) = nan;
+
+%% STATs
+vdiff = vs(:,:,2)-vs(:,:,1);
+% average 

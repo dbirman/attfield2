@@ -1,5 +1,12 @@
 function fit = fitLog(msdur,dp)
 %% fit an exponential to the dp data
+
+if any(isnan(dp))
+    nanidx = isnan(dp)==true;
+    msdur = msdur(~nanidx);
+    dp = dp(~nanidx);
+end
+
 f = @(x) x(1)*log(x(2)*msdur+1)-dp;
 
 fit.params = lsqnonlin(f,[0.2 80]);

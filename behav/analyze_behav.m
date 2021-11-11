@@ -232,6 +232,20 @@ for si = 1:length(adatas)
     plot(msdur,squeeze(rts(si,:,2)),'-b');
 end
 
+%% Save data to csv file
+csvdata = [];
+
+for si = 1:7
+    for di = 1:length(msdur)
+        for fi = 1:2
+            dat = [si msdur(di) fi dps(si,di,fi)];
+            csvdata = [csvdata; dat];
+        end
+    end
+end
+
+csvwriteh(fullfile('~/proj/attfield2/behav/dps.csv'),csvdata,{'Subject','Duration','Attend','dprime'});
+
 %% Plot sensitivity
 SIDs{end+1} = 'all';
 yvalsdp = [0 1 2 3];
@@ -239,7 +253,7 @@ yvalsauc = normcdf(yvalsdp./sqrt(2));
 yvalsauc = round(yvalsauc*100)/100;
 ylabels = arrayfun(@(x,y) sprintf('%1.0f/%0.2f',x,y),yvalsdp,yvalsauc,'UniformOutput',false);
 
-for si = 1:length(adatas)
+for si = length(adatas)
     h = figure; hold on
     %subplot(length(adatas),1,si); hold on
     
@@ -253,7 +267,7 @@ for si = 1:length(adatas)
 %     plot(fit.x,fit.y,'--k');
     fitfocal = fitLog(msdur,dp(:,1));
     plot(fitfocal.x,fitfocal.y,'-k');
-    disp(sprintf('Focal d''(x) = %1.3f * log(%1.3f * x + 1)',fitfocal.params(1),fitfocal.params(2)));
+    disp(sprintf('Focal d''(x) = %1.4f * log(%1.4f * x + 1)',fitfocal.params(1),fitfocal.params(2)));
     % focal
 %     errbar(msdur+.002,dp(:,2),dp_ci(:,2),'-b');
     p(2) = plot(msdur+.002,dp(:,2),'o','MarkerFaceColor','b','MarkerEdgeColor','w','MarkerSize',5);
@@ -261,7 +275,7 @@ for si = 1:length(adatas)
 %     plot(fit.x,fit.y,'--b');
     fitdist = fitLog(msdur,dp(:,2));
     plot(fitdist.x,fitdist.y,'-b');
-    disp(sprintf('Distributed d''(x) = %1.3f * log(%1.3f * x + 1)',fitdist.params(1),fitdist.params(2)));
+    disp(sprintf('Distributed d''(x) = %1.4f * log(%1.4f * x + 1)',fitdist.params(1),fitdist.params(2)));
 
     set(gca,'YTick',yvalsdp,'YTickLabel',ylabels);
     

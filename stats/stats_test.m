@@ -58,5 +58,13 @@ for i = 2:size(wdata,2)
     dat = wdata(:,i);
     med = nanmedian(dat);
     ci = bootci(10000,@nanmedian,dat);
-    disp(sprintf('delta within %s: %0.2f, [%0.2f, %0.2f]',header{i},med,ci(1),ci(2)));
+
+    if (ci(1) > 0) 
+        star = '*> ';
+    elseif (ci(2) < 0)
+        star = '*< ';
+    else
+        star = '';
+    end
+    disp(sprintf('%s%s: %0.2f, [%0.2f, %0.2f]',star,header{i},med,ci(1),ci(2)));
 end

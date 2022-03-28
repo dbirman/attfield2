@@ -7,6 +7,8 @@ addpath(genpath(fullfile('~/proj/gru')));
 addpath(genpath(fullfile('~/proj/mrTools')));
 
 subjs = [600 611 620 700 99 731 733];
+yob = [1997 2001 1996 2002 1999 2001 2000];
+gender = [2 2 2 1 2 2 2];
 
 SIDs = {};
 for si = 1:length(subjs)

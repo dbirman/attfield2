@@ -95,7 +95,10 @@ for i_f, fname in enumerate(args.bhv_files):
         f_cats = np.array([n.decode() for n in f['cat_ids'].attrs['cat_names']])
     if cats is None:
         cats = f_cats
-    if not all(f_cats == cats):
+    if not f_cats.shape == cats.shape or not all(f_cats == cats):
+        print("File:", fname)
+        print("With categories:", f_cats)
+        print("Does not match", cats)
         raise ValueError("Categories in {fname} don't match other files.")
     # Organize the data into pandas for grouping
     # Old format
@@ -139,8 +142,11 @@ if args.cmp is not None:
     # Old format
     else:
         f_cats = np.array([n.decode() for n in f['cat_ids'].attrs['cat_names']])
-    if not all(f_cats == cats):
-        raise ValueError("Categories in {fname} don't match other files.")
+    if not f_cats.shape == cats.shape or not all(f_cats == cats):
+        print("[ERROR] File:", args.cmp)
+        print("With categories:", f_cats)
+        print("Does not match", cats)
+        raise ValueError(f"Categories in {fname} don't match other files.")
     # Old format
     if 'cat_ids' in f.keys():
         cmp_data = pd.DataFrame(dict(

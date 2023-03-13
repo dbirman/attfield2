@@ -21,6 +21,7 @@ import sys
 import os
 import gc
 
+
 parser = ArgumentParser(
     description = 
         "Extract full layer activations.")
@@ -53,6 +54,7 @@ parser.add_argument('--max_feat', type = int, default = float('inf'),
 parser.add_argument('--cuda', action = 'store_true',
     help = 'Force data and weight tensors to reside on GPU.')
 args = parser.parse_args()
+print("Pulling from:", args.layers)
 args.layers = [eval('tuple('+l+')') for l in args.layers]
 
 
@@ -97,6 +99,18 @@ if args.regs is not None:
 
 meta, imgs = generate_set(**gen_kws)
 
+
+def suffixes_and_tensors(computed_layer):
+    """Convert between layers that return tensors and tuples of tensors"""
+    if isinstance(computed_layer, tuple):
+        suffixes = [f'_{tns_ix}' for tns_ix in range(len(computed_layer))]
+        layer_tensors = computed_layer
+    else:
+        suffixes = ('',)
+        layer_tensors = (computed_layer,)
+    return suffixes, layer_tensors
+
+
 for i_grp, ((grp_key, grp_meta), grp_imgs) in enumerate(zip(meta, imgs())):
     print("Group:", grp_key)
 
@@ -108,6 +122,7 @@ for i_grp, ((grp_key, grp_meta), grp_imgs) in enumerate(zip(meta, imgs())):
 
 
     for batch_n, batch_ix in enumerate(batches):
+        print(f"Batch {batch_n+1} / {len(batches)}")
 
         batch_imgs = grp_imgs[batch_ix]
         mgr = nm.NetworkManager.assemble(model, batch_imgs,
@@ -115,13 +130,14 @@ for i_grp, ((grp_key, grp_meta), grp_imgs) in enumerate(zip(meta, imgs())):
 
         if outputs is None:
             outputs = h5py.File(args.output_path, 'w')
+
             for layer in args.layers:
                 lstr = '.'.join(str(l) for l in layer)
-                n_feat = min(mgr.computed[layer].shape[1], args.max_feat)
-                outputs.create_dataset(lstr,
-                    (len(meta), len(grp_imgs), n_feat) +
-                     mgr.computed[layer].shape[2:],
-                    np.float32)
+                for suff, tns in zip(*suffixes_and_tensors(mgr.computed[layer])):
+                    n_feat = min(tns.shape[1], args.max_feat)
+                    outputs.create_dataset(lstr + suff,
+                        (len(meta), len(grp_imgs), n_feat) + tns.shape[2:],
+                        np.float32)
             outputs.create_dataset('y', (len(meta), len(grp_imgs)), np.uint8)
             # Set up outputs of regressions
             if args.regs is not None:
@@ -130,28 +146,26 @@ for i_grp, ((grp_key, grp_meta), grp_imgs) in enumerate(zip(meta, imgs())):
                     '/fn_' + os.path.basename(args.output_path), 'w')
                 for layer in args.layers:
                     lstr = '.'.join(str(l) for l in layer)
-                    fn_outputs.create_dataset(lstr,
-                        (len(meta), len(grp_imgs), len(regs)) +
-                         mgr.computed[layer].shape[2:],
-                        np.float32)
+                    for suff, tns in zip(*suffixes_and_tensors(mgr.computed[layer])):
+                        fn_outputs.create_dataset(lstr + suff,
+                            (len(meta), len(grp_imgs), len(regs)) + tns.shape[2:],
+                            np.float32)
 
         outputs['y'][i_grp] = grp_meta['ys']
         for layer in args.layers:
             lstr = '.'.join(str(l) for l in layer)
-            enc = mgr.computed[layer].detach().cpu()
-            n_feat = min(enc.shape[1], args.max_feat)
-            import matplotlib.pyplot as plt
-            # if lstr == '0.1.3':
-            #     plt.imshow(enc[0, 0]); plt.colorbar(); plt.title(i_grp); plt.show()
-            outputs[lstr][i_grp, batch_ix.tolist()] = enc[:, :n_feat]
+            for suff, tns in zip(*suffixes_and_tensors(mgr.computed[layer])):
+                enc = tns.detach().cpu()
+                n_feat = min(enc.shape[1], args.max_feat)
+                outputs[lstr+suff][i_grp, batch_ix.tolist()] = enc[:, :n_feat]
 
-            if args.regs is not None:
-                for i_c, c in enumerate(regs):
-                    fns = np.apply_along_axis(
-                        regs[c].decision_function,
-                        1, enc
-                    ).squeeze()
-                    fn_outputs[lstr][i_grp, batch_ix.tolist(), i_c] = fns
+                if args.regs is not None:
+                    for i_c, c in enumerate(regs):
+                        fns = np.apply_along_axis(
+                            regs[c].decision_function,
+                            1, enc
+                        ).squeeze()
+                        fn_outputs[lstr+suff][i_grp, batch_ix.tolist(), i_c] = fns
 
 outputs.close()
 

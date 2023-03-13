@@ -40,10 +40,10 @@ class params:
         ('2.0', 'Gauss'): Paths.data('runs/fig2/bhv_gauss_n600_beta_2.0.h5'),
         ('4.0', 'Gauss'): Paths.data('runs/fig2/bhv_gauss_n600_beta_4.0.h5'),
         ('11.0', 'Gauss'): Paths.data('runs/fig2/bhv_gauss_n600_beta_11.0.h5'),
-        ('1.1', 'Flat'): Paths.data('runs/val_rst/bhv_mim_gauss_beta_1.1.h5'),
-        ('2.0', 'Flat'): Paths.data('runs/val_rst/bhv_mim_gauss_beta_2.0.h5'),
-        ('4.0', 'Flat'): Paths.data('runs/val_rst/bhv_mim_gauss_beta_4.0.h5'),
-        ('11.0', 'Flat'): Paths.data('runs/val_rst/bhv_mim_gauss_beta_11.0.h5'),
+        ('1.1', 'Shift'): Paths.data('runs/val_rst/bhv_mim_gauss_beta_1.1.h5'),
+        ('2.0', 'Shift'): Paths.data('runs/val_rst/bhv_mim_gauss_beta_2.0.h5'),
+        ('4.0', 'Shift'): Paths.data('runs/val_rst/bhv_mim_gauss_beta_4.0.h5'),
+        ('11.0', 'Shift'): Paths.data('runs/val_rst/bhv_mim_gauss_beta_11.0.h5'),
     }
     bhv_labels = ['Shifted RFs']
     bhv_dist = Paths.data('runs/val_rst/bhv_base.h5')
@@ -62,6 +62,8 @@ class params:
         Paths.data('runs/fig2/lenc_task_gauss_b11.0.h5.sgain.npz'),
     ]
     sgain_stats_output = Paths.data('runs/fig5/fig-mg-gain_stats.csv')
+    cis_file = Paths.data('runs/ci_cmd.txt')
+    rawscores_df = Paths.data('runs/rawscores.csv')
 
     # axis limits
     size_lim = (0.5, 1.2)
@@ -81,8 +83,8 @@ bhv_focl_data, bhv_dist_data = behavior.bhv_data(
     params.bhv_focl, params.bhv_dist, "Dist.")
 
 # process sizemap/quiver data
-# qv_dist_ell, qv_focl_ell, qv_smooth_samp = quivers.quiver_data(
-#     lp_pre_ells, lp_att_ells[3], (0, 4, 0), 200)
+qv_dist_ell, qv_focl_ell, qv_smooth_samp = quivers.quiver_data(
+    lp_pre_ells, lp_att_ells[3], (0, 4, 0), 200)
 
 # load gain data
 sgain_focl = lineplots.gain_data(
@@ -107,25 +109,25 @@ gs = gridspec.GridSpec(
     nrows = 3, ncols = 3, figure = fig,
     wspace = 0.4, hspace = 0.45,
     left = 0.06, top = 0.96, right = 0.96, bottom = 0.06)
-base_a = util.panel_label(fig, gs[0, 0], "a")
-base_b = util.panel_label(fig, gs[1, 0], "b")
+base_a = util.panel_label(fig, gs[0, 0], "a", xoffset = 0.1)
+base_b = util.panel_label(fig, gs[1, 0], "b", xoffset = 0)
 base_c = util.panel_label(fig, gs[1, 1], "c")
 base_d = util.panel_label(fig, gs[1, 2], "d")
 base_e = util.panel_label(fig, gs[2, 0], "e")
 base_f = util.panel_label(fig, gs[2, 1], "f")
 
 # panel b
-# ax_d = fig.add_subplot(gs[1, 0])
-# size_map = quivers.quiverplot(
-#     qv_dist_ell, qv_focl_ell, qv_smooth_samp,
-#     ax_d, cmap = 'coolwarm', vrng = params.size_lim)
-# util.axis_expand(ax_d, L = 0.2, B = 0.2, R = -0.1, T = 0.05)
-# util.labels(ax_d,
-#     pkws.labels.image_position.format('Horizontal'),
-#     pkws.labels.image_position.format('Vertical'))
-# util.colorbar(
-#     fig, ax_d, size_map, ticks = params.size_lim + (1,),
-#     label = pkws.labels.rf_size, label_vofs = -0.03)
+ax_d = fig.add_subplot(gs[1, 0])
+size_map = quivers.quiverplot(
+    qv_dist_ell, qv_focl_ell, qv_smooth_samp,
+    ax_d, cmap = 'coolwarm', vrng = params.size_lim)
+util.axis_expand(ax_d, L = 0.2, B = 0.2, R = -0.1, T = 0.05)
+util.labels(ax_d,
+    pkws.labels.image_position.format('Horizontal'),
+    pkws.labels.image_position.format('Vertical'))
+util.colorbar(
+    fig, ax_d, size_map, ticks = params.size_lim + (1,),
+    label = pkws.labels.rf_size, label_vofs = -0.03)
 
 
 # panel c : single axis
@@ -139,7 +141,9 @@ lineplots.lineplot(
     xlim = (0, 180), ylim = params.shift_lim)
 util.labels(ax_c, pkws.labels.unit_distance, pkws.labels.rf_shift)
 util.legend(
-    fig, ax_c, pkws.labels.beta, pkws.pal_b,
+    fig, ax_c, 
+    ['Mimicked gain'] + pkws.labels.beta,
+    np.concatenate([[pkws.legend_header_color], pkws.pal_b.values]),
     inset = pkws.legend_inset)
 
 
@@ -187,28 +191,33 @@ lineplots.lineplot(
     line_span = pkws.lineplot_span, rad = 30, pal = pkws.pal_b,
     xlim = pkws.lineplot_xlim, ylim = params.gain_lim)
 util.labels(ax_e, pkws.labels.unit_distance, pkws.labels.effective_gain)
-util.mean_ci_table(
+gain_cis = util.mean_ci_table(
     params.sgain_focl,
     [focl for _, _, focl, _ in e_data_iter],
-    1000).to_csv(params.sgain_stats_output, index = False)
+    1000)
+gain_cis.to_csv(params.sgain_stats_output, index = False)
 
 
 # panel f
 ax_f = fig.add_subplot(gs[2, 1:])
 bhv_cis = behavior.bhv_plot(
     bhv_focl_data, bhv_dist_data,
-    bar1 = 0.69, bar2 = 0.87,
+    bar1 = behavior.d2auc(0.75), bar2 = behavior.d2auc(1.28),
     ax = ax_f, yrng = pkws.bhv_yrng, pal = pkws.pal_bhv,
-    jitter = 0.03, bootstrap_n = 1000)
+    jitter = 0.03, bootstrap_n = 1000,
+    rawscores_df = params.rawscores_df)
 util.legend(fig, ax_f,
     [pkws.labels.gaussian_model] +
     params.bhv_labels, pkws.pal_bhv,
     inset = pkws.legend_inset, inset_y = pkws.legend_inset / 2,
     left = True)
 bhv_cis.to_csv(params.bhv_stats_output)
+behavior.update_ci_text(params.cis_file,
+    ShiftPerformance = behavior.ci_text(bhv_cis, "Shift", "4.0", ''),
+    ShiftFX = behavior.ci_text(bhv_cis, "Shift", "4.0", 'fx_'))
 
 # save
-# plt.savefig(params.output, transparent = True)
+plt.savefig(params.output, transparent = True)
 
 
 

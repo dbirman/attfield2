@@ -49,6 +49,7 @@ pal_b = pd.read_csv(Paths.data('cfg/pal_beta.csv'))['color']
 pal_bhv = ['#020202', '#d55c00']
 pal_old = ['#0288D1', '#C62828', '#FFB300', '#5E35B1', '#43A047', '#FF4400', '#33FF00']
 # pal_old = ['#333333', '#FF4400', '#6A1B9A', '#512DA8', '#2196F3', '#26C6DA']
+legend_header_color = '#333333'
 
 # ----- axis limits ----
 
@@ -129,20 +130,22 @@ rf_locus = dict(marker = 'X', color = '#263238', ms = 6,
 class labels:
     rf_shift = 'RF shift [px]'
     rf_size = "RF Size Ratio"
-    effective_gain = "Effective Gain"
+    effective_gain = "Effective gain at layer 4"
+    effective_gain_short = "Effective gain"
     unit_distance = 'Unit distance from center [px]'
     bhv_performance = "Performance [AUC (d')]"
-    bhv_beta = "Attention Strength, Beta"
+    bhv_beta = "Attention strength"
+    discrim_performance = "Accuracy ({})"
     feat_map_position = "{} position in feature map"
     image_position = "{} image space"
-    feature_r2 = "Avg. Focal-Dist. Corr."
+    feature_r2 = "Avg. Focal-Dist. corr."
     layer = [f"Layer {i+1}" for i in range(4)]
-    beta = [r"$\beta$=1.1", "=2.", "=4.", "=11."]
-    gaussian_model = "Gaussian Gain"
+    beta = [r"1.1x ", "2x ", "4x ", "11x "]
+    gaussian_model = "Gaussian gain"
     reconst_models = [
         'Distributed',
         'Propagated Gain\n(Multiplied)',
-        'Retinal/V1\nGain',
+        'Gaussian Gain\n(Layer 1)',
         'Removed Gain\n(Divided)']
 
 

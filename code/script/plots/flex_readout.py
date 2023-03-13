@@ -119,7 +119,7 @@ AGG_NAME = 'mean'
 AGG = aggs[AGG_NAME]
 S = 12
 
-if False:
+if True:
     fig, ax = plt.subplots(figsize = (3 * EM, EM))
 
     plt.scatter(
@@ -246,7 +246,7 @@ ci_undo = mean_ci(roc_undo, args.bootstrap_n)
 jtr_dist = jtr(roc_dist); jtr_focl = jtr(roc_focl)
 jtr_fake = jtr(roc_fake); jtr_undo = jtr(roc_undo)
 
-if False:
+if True:
     fig, ax = plt.subplots(figsize = (2 * EM, 2 * EM))
 
     # raw data / by category
@@ -325,7 +325,7 @@ plt.savefig(args.output_path.format('r2map'))
 plt.close()
 
 
-if False:
+if True:
     fake_feat_r2 = []
     undo_feat_r2 = []
     for i_feat in range(512):

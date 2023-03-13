@@ -6,7 +6,7 @@ spec.loader.exec_module(link_libs)
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-
+from scipy import optimize
 import pandas as pd
 import numpy as np
 
@@ -18,7 +18,7 @@ sns.set_style('ticks')
 DODGE = 0.
 F_RESOLUTION = 100
 
-trials = pd.read_csv(Paths.data('human_pilot.csv'))
+trials = pd.read_csv(Paths.data('human_final.csv'))
 pal = pd.read_csv(Paths.data('cfg/pal_categ_1.csv'))['color'].values
 
 # Convert duration column to milliseconds
@@ -26,6 +26,8 @@ trials['ms'] = 4 * trials['duration']
 # Split into focal and distributed trial
 cued = trials.loc[trials['focal'] == 1]
 uncued = trials.loc[trials['focal'] == 0]
+
+
 
 
 # ------------------------------ Psychometric Function Fit
@@ -44,7 +46,7 @@ feval_min =  np.inf
 feval_max = -np.inf
 for (df, key) in [(cued,'focl'),(uncued,'dist')]:
     group = df.groupby('duration')
-    xs = [i + dodge
+    xs = [i + DODGE
           for i in range(len(group))]
     ys = [(s['targetPresent'] == s['responsePresent']).mean()
           for _, s in group]

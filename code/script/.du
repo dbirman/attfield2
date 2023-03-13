@@ -1,0 +1,11 @@
+./figs/fig1:24K
+./figs/fig5:100K
+./figs/fig2:88K
+./figs/figX:12K
+./figs/fig4:76K
+./figs:316K
+./__pycache__:4.0K
+./sanity:28K
+./runs:216K
+./plots:120K
+.:1004K

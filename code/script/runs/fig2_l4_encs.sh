@@ -9,6 +9,7 @@ $py3 $CODE/script/encodings.py \
     --gen_cfg "img=$IMG:n=100"                      `# Image config` \
     --cuda
 
+
 # Gaussian-field IT encodings
 for BETA in 1.1 2.0 4.0 11.0; do
 echo "BETA:" $BETA

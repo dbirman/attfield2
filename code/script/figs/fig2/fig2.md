@@ -178,7 +178,7 @@ $py3 $CODE/script/encodings.py \
     code/cornet/cornet/cornet_zr.py                 `# Model` \
     '(0,4,3)'                                       `# Pull layer` \
     --gen_cfg "img=$IMG:n=100"                      `# Image config` \
-    --regs $DATA/models/logregs_iso224_t100.npz     `# Regressions`
+    --regs $DATA/models/logregs_iso224_t100.npz --cuda    `# Regressions`
 # Gaussian-field IT encodings
 $py3 $CODE/script/encodings.py \
     $DATA/runs/fig2/enc_task_gauss_b2.0.h5          `# Output Path` \
@@ -188,10 +188,10 @@ $py3 $CODE/script/encodings.py \
     --gen_cfg "img=$IMG:n=100"                      `# Image config` \
     --attn $CODE/proc/att_models/cts_gauss_gain.py  `# Attention ` \
     --attn_cfg "layer=(0,1,0):beta=2.0"              \
-    --regs $DATA/models/logregs_iso224_t100.npz     `# Regressions`
+    --regs $DATA/models/logregs_iso224_t100.npz  --cuda   `# Regressions`
 # Download data
-scp $sherlock:$SHRLK_DATA/runs/fig2/fn_fnenc_task_base.h5 $DATA/runs/fig2/fn_fnenc_task_base.h5
-scp $sherlock:$SHRLK_DATA/runs/fig2/fn_enc_task_gauss_b2.0.h5 $DATA/runs/fig2/fn_enc_task_gauss_b2.0.h5
+scp $sherlock:$SHRLK_DATA/runs/fig2/fnenc_task_base.h5 $DATA/runs/fig2/fnenc_task_base.h5
+scp $sherlock:$SHRLK_DATA/runs/fig2/enc_task_gauss_b2.0.h5 $DATA/runs/fig2/enc_task_gauss_b2.0.h5
 
 # Flex readout plot
 py3 code/script/plots/flex_readout.py \

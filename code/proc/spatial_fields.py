@@ -1,5 +1,6 @@
 from scipy import interpolate
 from scipy import spatial
+import pandas as pd
 import numpy as np
 import h5py
 
@@ -33,8 +34,14 @@ class TreeField(object):
         dists[abs(dists) < dist_eps] = dist_eps
         weights = (1/dists)
         weights /= weights.sum(axis = -1, keepdims = True)
-        r_data = (self.r_data[ixs] * weights).sum(axis = -1)
-        c_data = (self.c_data[ixs] * weights).sum(axis = -1)
+
+        if (isinstance(self.r_data, pd.Series)): r_data = self.r_data.values
+        else: r_data = self.r_data
+        if (isinstance(self.c_data, pd.Series)): c_data = self.c_data.values
+        else: c_data = self.c_data
+
+        r_data = (r_data[ixs] * weights).sum(axis = -1)
+        c_data = (c_data[ixs] * weights).sum(axis = -1)
         return r_data, c_data
 
     def save(self, fname):

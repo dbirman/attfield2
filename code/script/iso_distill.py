@@ -10,7 +10,8 @@ import sys
 imagenet_h5 = sys.argv[1]
 meta_csv = sys.argv[2]
 output_h5 = sys.argv[3]
-blacklist = sys.argv[4:]
+size = int(sys.argv[4])
+blacklist = sys.argv[5:]
 
 
 if __name__ == '__main__':
@@ -19,5 +20,5 @@ if __name__ == '__main__':
         output_h5,
         blacklist = blacklist,
         metadata_csv = meta_csv,
-        image_size = 112
+        image_size = size
         )

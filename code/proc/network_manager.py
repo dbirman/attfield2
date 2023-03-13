@@ -158,10 +158,12 @@ class NetworkManager(object):
         return mgr
 
 
-    def summarize(self):
+    def summarize(self, level = None):
         for k in self.modules:
-            print(k, ":", str(self.modules[k]) + " => " +
-                          str(self.computed[k].shape))
+            if level is None or len(k) <= level:
+                print(k, ":", str(self.modules[k]) + " => " +
+                              summstr(self.computed[k])
+                )
 
 
     def save(filename):
@@ -183,12 +185,19 @@ def mod_merge(*mods):
     return ret
 
 
+def summstr(j):
+    return summstr.printmethods[type(j)](j)
+summstr.printmethods = {
+    torch.Tensor: lambda j: str(j.shape),
+    tuple: lambda j: "(" + ','.join(summstr(i) for i in j) + ")"
+}
 
 
 class NullManager(NetworkManager):
-    def pre_forward(self): pass
-    def post_forward(self, m, o): pass
+    def pre_forward(self, a, kw): return a, kw, None
+    def post_forward(self, m, o, c): return o
 NetworkManager.__curr_mgr = NullManager()
+
 
 
 

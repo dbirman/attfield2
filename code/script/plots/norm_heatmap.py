@@ -156,31 +156,41 @@ n_feat = {
 # this is a cleaner statistic and is maybe the right thing to consider,
 # even if it's not the most obvious choice
 
-
-pre_sds = {}
-for l in layers:
-    feat_sds = [
-            normalized(pre_acts[l][:, :n_img[l], i_feat]).std(axis = (1,2))
-            for i_feat in tqdm.trange(n_feat[l], position = 0)]
-    pre_sds[l] = np.stack(feat_sds)
-print("Saved base stddev to ", args.pre_acts + '.sd.npz')
-np.savez(args.pre_acts + '.sd.npz', **pre_sds)
+if os.path.exists(args.pre_acts + '.norm.sd.npz') and args.no_read:
+    print("Loading stddev ", args.pre_acts + '.norm.sd.npz')
+    pre_sds = {k: v for k, v in np.load(args.pre_acts + '.norm.sd.npz').items()}
+else:
+    pre_sds = {}
+    for l in layers:
+        feat_sds = [
+                normalized(pre_acts[l][:, :n_img[l], i_feat]).std(axis = (1,2))
+                for i_feat in tqdm.trange(n_feat[l], position = 0)]
+        pre_sds[l] = np.stack(feat_sds)
+    print("Saved normalized base stddev to ", args.pre_acts + '.norm.sd.npz')
+    np.savez(args.pre_acts + '.norm.sd.npz', **pre_sds)
 
 sd_gains = []
 lfs = []
 zero_div = lambda a,b: np.divide(a, b, out = np.zeros_like(a), where = b!=0)
 for i_f in range(len(post_acts)):
 
-    sd_gains.append({})
-    for l in layers:
-        feat_sds = [
-            zero_div(
-                normalized(
-                    post_acts[i_f][l][:, :n_img[l], i_feat]
-                ).std(axis = (1,2)),
-                pre_sds[l][i_feat])
-            for i_feat in tqdm.trange(n_feat[l], position = 0)]
-        sd_gains[i_f][l] = np.stack(feat_sds, axis = 1)
+    if os.path.exists(args.post_acts[i_f] + '.norm.sgain.npz') and args.no_read:
+        print("Loading SD gains ", args.post_acts[i_f] + '.norm.sgain.npz')
+        sd_gains.append({k: v for k, v in np.load(args.post_acts[i_f] + '.norm.sgain.npz').items()})
+    else:
+        sd_gains.append({})
+        for l in layers:
+            feat_sds = [
+                zero_div(
+                    normalized(
+                        post_acts[i_f][l][:, :n_img[l], i_feat]
+                    ).std(axis = (1,2)),
+                    pre_sds[l][i_feat])
+                for i_feat in tqdm.trange(n_feat[l], position = 0)]
+            sd_gains[i_f][l] = np.stack(feat_sds, axis = 1)
+
+        print("Saved normalized sd gains to", args.post_acts[i_f] + '.norm.sgain.npz')
+        np.savez(args.post_acts[i_f] + '.norm.sgain.npz', **sd_gains[i_f])
 
     lfs.append({})
     for l in layers:
@@ -188,7 +198,12 @@ for i_f in range(len(post_acts)):
         for i_exp in range(len(exponents)):
             xs = np.tile(dists[l][None, :, :], [n_feat[l], 1, 1]).ravel()
             ys = sd_gains[i_f][l][i_exp].ravel()
-            lfs[i_f][l][i_exp] = locus_field_ratio(xs, ys)
+            if not args.no_line:
+                plt.figure()
+                plt.plot(xs, ys, 'o')
+                plt.show()
+                plt.close()
+        lfs[i_f][l][i_exp] = locus_field_ratio(xs, ys)
 
 
 
@@ -202,10 +217,11 @@ for l in layers:
                    for i_f in range(len(post_acts))]),
         ax = ax)
     ax.set_title(l)
-    ax.set_yticks(np.arange(len(args.disp)) + 0.5)
+    ax.set_yticks(np.arange(len(args.disp))[::-1] + 0.5)
     ax.set_xticks(np.arange(len(exponents)) + 0.5)
     ax.set_yticklabels(args.disp, va = 'center')
     ax.set_xticklabels(exponents)
+    plt.savefig(args.output_path)
     plt.show()
 
 

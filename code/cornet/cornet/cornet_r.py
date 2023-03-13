@@ -66,6 +66,17 @@ class CORblock_R(nn.Module):
         output = state
         return output, state
 
+class CORblock_V1(CORblock_R):
+    pass
+
+class CORblock_V2(CORblock_R):
+    pass
+
+class CORblock_V4(CORblock_R):
+    pass
+
+class CORblock_IT(CORblock_R):
+    pass
 
 class CORnet_R(nn.Module):
 
@@ -73,10 +84,11 @@ class CORnet_R(nn.Module):
         super().__init__()
         self.times = times
 
-        self.V1 = CORblock_R(3, 64, kernel_size=7, stride=4, out_shape=56)
-        self.V2 = CORblock_R(64, 128, stride=2, out_shape=28)
-        self.V4 = CORblock_R(128, 256, stride=2, out_shape=14)
-        self.IT = CORblock_R(256, 512, stride=2, out_shape=7)
+        self.retina = Identity()
+        self.V1 = CORblock_V1(3, 64, kernel_size=7, stride=4, out_shape=56)
+        self.V2 = CORblock_V2(64, 128, stride=2, out_shape=28)
+        self.V4 = CORblock_V4(128, 256, stride=2, out_shape=14)
+        self.IT = CORblock_IT(256, 512, stride=2, out_shape=7)
         self.decoder = nn.Sequential(OrderedDict([
             ('avgpool', nn.AdaptiveAvgPool2d(1)),
             ('flatten', Flatten()),
@@ -84,27 +96,52 @@ class CORnet_R(nn.Module):
         ]))
 
     def forward(self, inp):
-        outputs = {'inp': inp}
+        # for measuring RFs
+        inp = self.retina(inp)
+
+        outputs = {('inp', t): inp for t in range(self.times)}
         states = {}
         blocks = ['inp', 'V1', 'V2', 'V4', 'IT']
 
         for block in blocks[1:]:
             if block == 'V1':  # at t=0 input to V1 is the image
-                inp = outputs['inp']
+                inp = outputs[('inp', 0)]
+                print(f"Block {block} t=0; input from ('inp', 0), state: None")
             else:  # at t=0 there is no input yet to V2 and up
                 inp = None
-            new_output, new_state = getattr(self, block)(inp, batch_size=outputs['inp'].shape[0])
-            outputs[block] = new_output
-            states[block] = new_state
+                print(f"Block {block} t=0; input: None, state: None")
+            new_output, new_state = getattr(self, block)(inp, batch_size=outputs[('inp', 0)].shape[0])
+            outputs[(block, 0)] = new_output
+            states[(block, 0)] = new_state
 
         for t in range(1, self.times):
             for block in blocks[1:]:
                 prev_block = blocks[blocks.index(block) - 1]
-                prev_output = outputs[prev_block]
-                prev_state = states[block]
+                prev_output = outputs[(prev_block, t-1)]
+                prev_state = states[(block, t-1)]
+                print(f"Block {block} t={t}; input from {(prev_block, t-1)}, state from {(block, t-1)}")
                 new_output, new_state = getattr(self, block)(prev_output, prev_state)
-                outputs[block] = new_output
-                states[block] = new_state
+                outputs[(block, t)] = new_output
+                states[(block, t)] = new_state
 
-        out = self.decoder(outputs['IT'])
+        out = self.decoder(outputs[('IT', self.times - 1)])
         return out
+
+kek = 'kek'
+
+def get_model(weight_root = Paths.data.join("models")):
+    from proc.cornet import load_cornet
+    return load_cornet('R', model = CORnet_R(), weight_root = weight_root)[0]
+
+
+
+
+
+
+
+
+
+
+
+
+

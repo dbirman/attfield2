@@ -35,26 +35,32 @@ def quiver_data(dist_ells, focl_ells, layer, resolution):
 
 
 
-def quiverplot(dist_ell, focl_ell, smooth_samp, ax, cmap, vrng = (None, None), pkws = default_pkws):
+def quiverplot(dist_ell, focl_ell, smooth_samp, ax, cmap, vrng = (None, None), pkws = default_pkws, desctext = None, arrows = True):
     map_img = smooth_samp
     norm = colors.TwoSlopeNorm(vmin=vrng[0], vcenter=1., vmax=vrng[1])
     im_obj = ax.imshow(
         map_img, extent = (0, 224, 224, 0),
         cmap = cmap, norm = norm)
 
-    quiv_lines = LineCollection(
-        np.stack([
-            dist_ell[['com_x', 'com_y']].values,
-            focl_ell[['com_x', 'com_y']].values
-        ], axis = 1), zorder = 1, **pkws.quiver_line)
-    ax.add_collection(quiv_lines)
-    ax.plot(focl_ell['com_x'], focl_ell['com_y'], 's',
-        zorder = 2, **pkws.quiver_point)
+    if arrows:
+        quiv_lines = LineCollection(
+            np.stack([
+                dist_ell[['com_x', 'com_y']].values,
+                focl_ell[['com_x', 'com_y']].values
+            ], axis = 1), zorder = 1, **pkws.quiver_line)
+        ax.add_collection(quiv_lines)
+        ax.plot(focl_ell['com_x'], focl_ell['com_y'], 's',
+            zorder = 2, **pkws.quiver_point)
 
     ax.set_xlim(0, 224)
     ax.set_ylim(224, 0)
     ax.set_xticks([])
     ax.set_yticks([])
+
+    if desctext is not None:
+        ax.text(0.95, 1.03, desctext, ha = 'right',
+            color = 'k', fontsize = 6.0, fontstyle = 'italic',
+            transform = ax.transAxes)
 
     return im_obj
 

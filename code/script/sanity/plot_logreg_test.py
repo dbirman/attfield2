@@ -31,6 +31,7 @@ parser.add_argument('--verbose', action = "store_true",
 parser.add_argument('--nodata', action = 'store_true',
     help = 'Run without access to true data files. They\'re often top '+
            'large to live on the same machine as scripting is done on.')
+parser.add_argument("--ci_file", nargs = 2, default = None)
 args = parser.parse_args()
 
 
@@ -138,7 +139,18 @@ with PdfPages(args.output_path) as pdf:
     pdf.savefig()
     plt.close()
 
+if args.ci_file is not None:
+    from plot import behavior
+    from plot import util
 
+    center = np.median(list(auc_scores.values()))
+    lo = np.min(list(auc_scores.values()))
+    hi = np.max(list(auc_scores.values()))
+    # median_agg = lambda arr: np.median(arr, axis = 1)
+    # ci = util.mean_ci(list(auc_scores.values()), 1000, aggfunc = median_agg)
+
+    behavior.update_ci_text(args.ci_file[0],
+        **{args.ci_file[1]: (lo, center, hi)})
 
 
 

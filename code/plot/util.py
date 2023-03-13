@@ -8,10 +8,10 @@ from plot import kwargs as default_pkws
 
 # -------------------------------------- Panel / plot structure ----
 
-def panel_label(fig, gs, panel, off = True):
+def panel_label(fig, gs, panel, xoffset = -0.09, off = True):
     ax = fig.add_subplot(gs, label = panel)
     ax.text(
-        -0.1, 1.05, panel,
+        -xoffset, 1.05, panel,
         ha = 'right', transform = ax.transAxes,
         fontsize = 8, fontweight = '700', 
     )
@@ -87,7 +87,7 @@ def colorbar(
 colorbar.unique_id = 0
 
 
-def legend(fig, ax, labels, pal, inset = 0, left = False, inset_y = None, pkws = default_pkws):
+def legend_transform_data(fig, ax, inset, inset_y, pkws):
     text_height = ax.transAxes.inverted().transform((0, 
         fig.dpi_scale_trans.transform((0, pkws.legend_text['fontsize']))[1] /
         pkws.rc['figure.dpi']))[1] - ax.transAxes.inverted().transform((0,0))[1]
@@ -98,6 +98,10 @@ def legend(fig, ax, labels, pal, inset = 0, left = False, inset_y = None, pkws =
     inset_x = ax.transAxes.inverted().transform((
         inset / 2.54 * pkws.rc['figure.dpi'], 0))[0
         ] - ax.transAxes.inverted().transform((0, 0))[0]
+    return text_height, inset_x, inset_y
+
+def legend(fig, ax, labels, pal, inset = 0, left = False, inset_y = None, pkws = default_pkws):
+    text_height, inset_x, inset_y = legend_transform_data(fig, ax, inset, inset_y, pkws)
     for i_l, lab in enumerate(labels):
         if left:
             ax.text(
@@ -115,22 +119,47 @@ def legend(fig, ax, labels, pal, inset = 0, left = False, inset_y = None, pkws =
                 **pkws.legend_text)
 
 
+def line_legend(
+    fig, ax, labels, line_kw, color,
+    line_length = 0.07, line_pad = 0.03,
+    inset = 0, left = False, inset_y = None, pkws = default_pkws):
+
+    text_height, inset_x, inset_y = legend_transform_data(fig, ax, inset, inset_y, pkws)
+    for i_l, (lab, lkw) in enumerate(zip(labels, line_kw)):
+        y = 1 - i_l * pkws.legend_line_height * text_height - inset_y
+        ax.plot(
+            [inset_x, inset_x + line_length],
+            [y - text_height / 2] * 2,
+            color = color,
+            zorder = -1,
+            transform = ax.transAxes,
+            **lkw)
+        ax.text(
+            inset_x + line_length + line_pad, y,
+            lab, color = color,
+            ha = 'left', va = 'top',
+            transform = ax.transAxes,
+            **pkws.legend_text)
+
+
 
 # -------------------------------------- Binned-mean average line and CIs ----
 
-def mean_ci(arr, n):
+def mean_ci(arr, n, aggfunc = lambda x: x.mean(axis = 1)):
     arr = np.array(arr)
     if arr.size > 1e3:
         print("Measuring ci for large array:", arr.size)
     return np.quantile(
-        np.random.choice(arr.ravel(), (n, arr.size), replace = True).mean(axis = 1),
-        [0.05, 0.95])
+        aggfunc(np.random.choice(arr.ravel(), (n, arr.size), replace = True)),
+        [0.025, 0.975])
 
-def mean_ci_table(labels, arrs, n):
-    cis = [mean_ci(arr, n) for arr in arrs]
+def mean_ci_table(labels, arrs, n, aggfunc = lambda x: x.mean(axis = 1)):
+    cis = [mean_ci(arr, n, aggfunc = aggfunc) for arr in arrs]
+    centers = [aggfunc(np.array([arr]))[0] for arr in arrs]
     return pd.DataFrame({
         'group': list(labels),
         'lo': list(ci[0] for ci in cis),
+        'center': list(c for c in centers),
         'hi': list(ci[1] for ci in cis),
         })
 
@@ -152,6 +181,7 @@ def binned_mean_line(xs, ys, n_bins, boostrap_n):
         bin_cis[:, 0], bin_cis[:, 1]
     )
 
+
 def running_mean_line(xs, ys, span, res = 400):
     x_eval = np.linspace(xs.min(), xs.max(), res)
     yout = loess(xs, ys, x_eval, span)
@@ -167,6 +197,7 @@ def running_mean_line(xs, ys, span, res = 400):
 
 
 def loess(xs, ys, x_eval, span = 30):
+    if isinstance(xs, pd.Series): xs = xs.values
     dists = abs(x_eval[None, :] - xs[:, None])
     normed_dists = np.clip(dists / span, -1, 1)
     w = (1 - (normed_dists)**3)**3

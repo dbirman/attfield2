@@ -31,6 +31,8 @@ class params:
         ('11.0', 'Gauss'): Paths.data('runs/fig2/bhv_gauss_n600_beta_11.0.h5'),
     }
     bhv_stats_output = Paths.data('runs/fig2/fig-cornet-bhv_stats.csv')
+    cis_file = Paths.data('runs/ci_cmd.txt')
+    rawscores_df = Paths.data('runs/rawscores.csv')
 
 
 # ----------------  load data  ----
@@ -68,11 +70,16 @@ base_d = util.panel_label(fig, gs[2, 0], "d")
 ax_a = fig.add_subplot(gs[0, 0])
 bhv_cis = behavior.bhv_plot(
     bhv_focl_data, bhv_dist_data,
-    bar1 = 0.69, bar2 = 0.87,
+    bar1 = behavior.d2auc(0.75), bar2 = behavior.d2auc(1.28),
     ax = ax_a, yrng = pkws.bhv_yrng, pal = pkws.pal_bhv,
-    jitter = 0.03, bootstrap_n = 1000)
+    jitter = 0.03, bootstrap_n = 1000,
+    rawscores_df = params.rawscores_df)
 util.axis_expand(ax_a, L = -0.1, B = 0, R = 0, T = 0)
 bhv_cis.to_csv(params.bhv_stats_output)
+behavior.update_ci_text(params.cis_file,
+    DistPerformance = behavior.ci_text(bhv_cis, "Dist.", "Dist.", ''),
+    GaussPerformance = behavior.ci_text(bhv_cis, "Gauss", "4.0", ''),
+    GaussFX = behavior.ci_text(bhv_cis, "Gauss", "4.0", 'fx_'))
 
 # save
 plt.savefig(params.output, transparent = True)

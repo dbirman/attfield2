@@ -97,7 +97,7 @@ class args:
 pre_acts = h5py.File(args.pre_acts, 'r+')
 layers = [
     l for l in pre_acts.keys()
-    if args.layers is None or l in args.layers]
+    if (args.layers is None or l in args.layers) and (l != 'y')]
 # print("LAYERs", layers, [l for l in pre_acts.keys()], args.layers)
 post_acts = []
 for fname in args.post_acts:
@@ -171,7 +171,6 @@ for l in layers:
     cs, rs = np.meshgrid(np.linspace(0, 1, ws[l]), np.linspace(0, 1, hs[l]))
     dists[l] = np.sqrt(((cs - args.loc[0]) * args.degrees_in_img) ** 2 +
                        ((rs - args.loc[1]) * args.degrees_in_img) ** 2)
-
 
 n_feat = {
     l: min(pre_acts[l].shape[2], args.n_feat)

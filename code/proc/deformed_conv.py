@@ -254,6 +254,7 @@ def apply_filter_field(flt, ix, field_fn, amp, negative_warn = True):
 # =======================================================================
 
 
+
 def merge_grid_and_stencil(conv_grid, filter_stencil):
     '''
     Combine a grid and stencil to get convolution indices
@@ -271,6 +272,29 @@ def merge_grid_and_stencil(conv_grid, filter_stencil):
     ix = np.moveaxis(ix, 2, -1)
 
     return ix
+
+
+
+def merge_grid_and_nonuniform_stencil(conv_grid, filter_stencil):
+    '''
+    Combine a grid and stencil to get convolution indices, but with
+    a stencil that varies according to output postion
+    ### Parameters
+    - `grid` --- `array` shape (out_row, out_col, 2)
+    - `stencil` --- `array` shape (out_row, out_col, sten_row, sten_col, 2)
+    ### Returns
+    - `ix` --- `np.ndarray` shape (out_row, out_col, sten_row, sten_col, 2)
+    '''
+
+    # Shape: (out_row, out_col, 1, 1, 2,)
+    grid_broadcast = conv_grid[:, :, None, None, :]
+    # Shape: (out_row, out_col, filter_rows, filter_cols, 2)
+    sten_broadcast = filter_stencil
+
+    ix = grid_broadcast + sten_broadcast
+
+    return ix
+
 
 
 def take_conv_inputs(inp, ix, pad):
@@ -378,7 +402,6 @@ def deformed_conv(inp, ix, flt, pad, bias = None):
     # Shape: (N, C_out, out_row, out_col, sten_row, sten_col)
     conved = torch.sum(conved, dim = (-2, -1))
     if bias is not None:
-        print("used bias")
         conved = conved + bias[None, :, None, None]
 
     return conved

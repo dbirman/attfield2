@@ -24,10 +24,10 @@ class params:
     output = 'plots/figures/fig5/fig-sn.pdf'
     dist_ells = Paths.data('runs/270420/summ_base_ell.csv')
     focl_ells = [
-        Paths.data('runs/fig5/ell_sna_n100_b1.1_ell.csv'),
-        Paths.data('runs/fig5/ell_sna_n100_b2.0_ell.csv'),
-        Paths.data('runs/fig5/ell_sna_n100_b4.0_ell.csv'),
-        Paths.data('runs/fig5/ell_sna_n100_b11.0_ell.csv'),
+        Paths.data('runs/fig5/ell_sn4_n100_b1.1_ell.csv'),
+        Paths.data('runs/fig5/ell_sn4_n100_b2.0_ell.csv'),
+        Paths.data('runs/fig5/ell_sn4_n100_b4.0_ell.csv'),
+        Paths.data('runs/fig5/ell_sn4_n100_b11.0_ell.csv'),
     ]
     comp_ells = [
         Paths.data('runs/270420/summ_cts_gauss_b1.1_ell.csv'),
@@ -77,8 +77,10 @@ class params:
         Paths.data('runs/fig2/lenc_task_gauss_b4.0.h5.sgain.npz'),
         Paths.data('runs/fig2/lenc_task_gauss_b11.0.h5.sgain.npz'),
     ]
-    sgain_stats_output = Paths.data('runs/fig5/fig-sn-gain_stats.csv')
+    sgain_stats_output = Paths.data('runs/fig5/fig-sn-gain_stats')
     sgain_comp_output = Paths.data('runs/fig2/fig-gauss-gain_stats.csv')
+    cis_file = Paths.data("runs/ci_cmd.txt")
+    rawscores_df = Paths.data('runs/rawscores.csv')
 
     # axis limits
     size_lim = (0.85, 1.1)
@@ -156,7 +158,9 @@ lineplots.lineplot(
     xlim = (0, 180), ylim = params.shift_lim)
 util.labels(ax_c, pkws.labels.unit_distance, pkws.labels.rf_shift)
 util.legend(
-    fig, ax_c, pkws.labels.beta, pkws.pal_b,
+    fig, ax_c, 
+    ['Gain strength'] + pkws.labels.beta,
+    np.concatenate([[pkws.legend_header_color], pkws.pal_b.values]),
     inset = pkws.legend_inset)
 
 
@@ -172,7 +176,7 @@ lineplots.lineplot(
 util.labels(ax_d, pkws.labels.unit_distance, pkws.labels.rf_size)
 
 
-# panel e
+# -----------  panel e
 gs_e = gs[2, 0].subgridspec(4, 2, **pkws.mini_gridspec,
     width_ratios = [2, 1])
 # e: breakout
@@ -193,19 +197,30 @@ lineplots.lineplot(
     line_span = pkws.lineplot_span, rad = 30, pal = pkws.pal_b,
     xlim = pkws.lineplot_xlim, ylim = params.gain_lim)
 util.labels(ax_e, pkws.labels.unit_distance, pkws.labels.effective_gain)
-util.mean_ci_table(
-    params.sgain_focl,
+# output confidence intervals on resulting gain
+gain_mean_ci_table = util.mean_ci_table(
+    [os.path.basename(f) for f in params.sgain_focl],
     [focl for _, _, focl, _ in e_data_iter],
-    1000).to_csv(params.sgain_stats_output, index = False)
+    1000)
+gain_mean_ci_table.to_csv(params.sgain_stats_output + '.csv', index = False)
+gain_sd_ci_table = util.mean_ci_table(
+    [os.path.basename(f) for f in params.sgain_focl],
+    [focl for _, _, focl, _ in e_data_iter],
+    1000, aggfunc = lambda x: x.std(axis = 1))
+gain_sd_ci_table.to_csv(params.sgain_stats_output + '_sd.csv', index = False)
+behavior.update_ci_text(params.cis_file,
+    SensGainMean = behavior.group_ci_text(gain_mean_ci_table, 'lenc_sna_n100_b4.0.h5.sgain.npz', ''),
+    SensGainSD = behavior.group_ci_text(gain_sd_ci_table, 'lenc_sna_n100_b4.0.h5.sgain.npz', ''))
 
-# panel f
+# ----------- panel f
 ax_f = fig.add_subplot(gs[2, 1:])
 bhv_pal = np.concatenate([pkws.pal_bhv, pkws.pal_l.values])
 bhv_cis = behavior.bhv_plot(
     bhv_focl_data, bhv_dist_data,
-    bar1 = 0.69, bar2 = 0.87, dodge = 0.11,
+    bar1 = behavior.d2auc(0.75), bar2 = behavior.d2auc(1.28), dodge = 0.11,
     ax = ax_f, yrng = pkws.bhv_yrng, pal = bhv_pal,
-    jitter = 0.02, bootstrap_n = 1000)
+    jitter = 0.02, bootstrap_n = 1000,
+    rawscores_df = params.rawscores_df)
 util.legend(fig, ax_f,
     [pkws.labels.gaussian_model, params.bhv_labels[0]],
     pkws.pal_bhv,
@@ -220,6 +235,19 @@ util.legend(fig, ax_f,
     inset = 3.5, inset_y = pkws.legend_inset / 4,
     left = True)
 bhv_cis.to_csv(params.bhv_stats_output)
+behavior.update_ci_text(params.cis_file,
+    GaussPerformancePointOne = behavior.ci_text(bhv_cis, 'Gauss', '1.1', ''),
+    GaussPerformanceTwo = behavior.ci_text(bhv_cis, 'Gauss', '2.0', ''),
+    GaussPerformanceFour = behavior.ci_text(bhv_cis, 'Gauss', '4.0', ''),
+    GaussPerformanceEleven = behavior.ci_text(bhv_cis, 'Gauss', '11.0', ''),
+    SensPerformancePointOne = behavior.ci_text(bhv_cis, 'al', '1.1', ''),
+    SensPerformanceTwo = behavior.ci_text(bhv_cis, 'al', '2.0', ''),
+    SensPerformanceFour = behavior.ci_text(bhv_cis, 'al', '4.0', ''),
+    SensPerformanceEleven = behavior.ci_text(bhv_cis, 'al', '11.0', ''),
+    SensFXPointOne = behavior.ci_text(bhv_cis, 'al', '1.1', 'fx_'),
+    SensFXTwo = behavior.ci_text(bhv_cis, 'al', '2.0', 'fx_'),
+    SensFXFour = behavior.ci_text(bhv_cis, 'al', '4.0', 'fx_'),
+    SensFXEleven = behavior.ci_text(bhv_cis, 'al', '11.0', 'fx_'))
 
 
 # save

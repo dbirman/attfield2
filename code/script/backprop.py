@@ -132,7 +132,7 @@ def main():
     else:
         four_task = det.DistilledDetectionTask(
             args.comp_images_path, whitelist = args.cats)
-    imgs, ys, _ = four_task.val_set(None, args.test_n)
+    imgs, ys, _, _ = four_task.val_set(None, args.test_n)
     if args.attn is not None:
         kws = atts.load_cfg(args.attn_cfg)
         att_mods = atts.load_model(args.attn, **kws)
